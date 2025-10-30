@@ -10,10 +10,10 @@ class AddGhlTokensToUsersTable extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             if (!Schema::hasColumn('users', 'ghl_access_token')) {
-                $table->string('ghl_access_token')->nullable();
+                $table->text('ghl_access_token')->nullable();
             }
             if (!Schema::hasColumn('users', 'ghl_refresh_token')) {
-                $table->string('ghl_refresh_token')->nullable();
+                $table->text('ghl_refresh_token')->nullable();
             }
             if (!Schema::hasColumn('users', 'ghl_token_expires_at')) {
                 $table->timestamp('ghl_token_expires_at')->nullable();

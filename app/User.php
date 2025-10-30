@@ -18,7 +18,6 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'id_location',
-        'ghl_location_id',
         'ghl_access_token',
         'ghl_refresh_token',
         'ghl_token_expires_at',
@@ -32,4 +31,20 @@ class User extends Authenticatable
     protected $casts = [
         'ghl_token_expires_at' => 'datetime',
     ];
+
+    /**
+     * Relation avec les personnes des propriétés
+     */
+    public function propertyPersons()
+    {
+        return $this->hasMany(\App\Models\PropertyPerson::class, 'id_location', 'id_location');
+    }
+
+    /**
+     * Relation avec les opportunités des propriétés
+     */
+    public function propertyOpportunities()
+    {
+        return $this->hasMany(\App\Models\PropertyOpportunity::class, 'id_location', 'id_location');
+    }
 }

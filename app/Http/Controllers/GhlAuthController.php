@@ -84,15 +84,14 @@ class GhlAuthController extends Controller
         }
 
         // Trouver ou créer l'utilisateur basé sur userId
-        $user = \App\Models\User::where('id_location', $userId)->first();
+        $user = \App\User::where('id_location', $userId)->first();
         
         try {
             if (!$user) {
                 // Créer un nouvel utilisateur pour ce userId
-                $user = \App\Models\User::create([
+                $user = \App\User::create([
                     'name' => 'GHL User ' . \Illuminate\Support\Str::random(8),
                     'id_location' => $userId,
-                    'ghl_location_id' => $userId,
                     'ghl_access_token' => $accessToken,
                     'ghl_refresh_token' => $refreshToken,
                     'ghl_token_expires_at' => now()->addSeconds($expiresIn),
@@ -104,7 +103,6 @@ class GhlAuthController extends Controller
                 $user->ghl_access_token = $accessToken;
                 $user->ghl_refresh_token = $refreshToken;
                 $user->ghl_token_expires_at = now()->addSeconds($expiresIn);
-                $user->ghl_location_id = $userId;
                 $user->save();
                 
                 Log::info('GHL user tokens updated successfully');
