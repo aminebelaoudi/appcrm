@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
 use App\Models\PropertyPerson;
 use App\Models\PropertyOpportunity;
-use App\Models\User;
+use App\User;
 
 
 class CentrisController extends Controller
