@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use App\Models\PropertyPerson;
 use App\Models\PropertyOpportunity;
 use App\User;
@@ -11,41 +13,184 @@ use App\User;
 
 class CentrisController extends Controller
 {
+    /**
+     * Obtenir un token d'accès pour une location spécifique
+     */
+    private function getLocationToken($locationId)
+    {
+        $companyId = env('companyId');
+        
+        // Trouver l'utilisateur company pour récupérer son access_token
+        $companyUser = User::where('id_location', $companyId)->first();
+        
+        if (!$companyUser || !$companyUser->ghl_access_token) {
+            Log::error('Company user not found or missing access token', ['companyId' => $companyId]);
+            return null;
+        }
+        
+        try {
+            $response = Http::asForm()
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'Version' => '2021-07-28',
+                    'Authorization' => 'Bearer ' . $companyUser->ghl_access_token
+                ])
+                ->post('https://services.leadconnectorhq.com/oauth/locationToken', [
+                    'companyId' => $companyId,
+                    'locationId' => $locationId
+                ]);
+            
+            if ($response->successful()) {
+                $data = $response->json();
+                
+                Log::info('Location token obtained successfully', [
+                    'locationId' => $locationId,
+                    'has_access_token' => !empty($data['access_token'])
+                ]);
+                
+                return $data;
+            } else {
+                Log::error('Failed to get location token', [
+                    'locationId' => $locationId,
+                    'status' => $response->status(),
+                    'response' => $response->body()
+                ]);
+                return null;
+            }
+        } catch (\Exception $e) {
+            Log::error('Exception getting location token', [
+                'locationId' => $locationId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+    
     public function showProperties()
     {
         // Permettre l'affichage dans un iframe depuis n'importe quel domaine
         header('X-Frame-Options: ALLOWALL');
         header('Content-Security-Policy: frame-ancestors *');
 
-        // Vérifier si un locationId est fourni dans l'URL
-        $locationId = request()->query('locationId');
+    // Vérifier si un locationId est fourni dans l'URL
+    $locationId = request()->query('locationId');
+    // Code de bureau (OfficeKey) reçu en paramètre de l'URL et à persister
+    $cbParam = request()->query('cb');
         
         if ($locationId) {
             // Rechercher l'utilisateur avec cet id_location dans la BD
             $user = User::where('id_location', $locationId)->first();
             
-            // Si l'utilisateur n'existe pas, afficher un message d'accès refusé
+            // Si l'utilisateur n'existe pas, essayer de créer automatiquement via l'API locationToken
             if (!$user) {
-                return view('centris.no-access', ['message' => "Vous n'avez pas accès à ces propriétés."]);
+                Log::info('User not found for locationId, attempting to create', ['locationId' => $locationId]);
+                
+                $tokenData = $this->getLocationToken($locationId);
+                
+                if ($tokenData && isset($tokenData['access_token'])) {
+                    // Créer le nouvel utilisateur avec les tokens de la location
+                    try {
+                        $user = User::create([
+                            'name' => 'Location ' . $locationId,
+                            'id_location' => $locationId,
+                            'ghl_access_token' => $tokenData['access_token'],
+                            'ghl_refresh_token' => $tokenData['refresh_token'] ?? null,
+                            'ghl_token_expires_at' => isset($tokenData['expires_in']) 
+                                ? now()->addSeconds($tokenData['expires_in']) 
+                                : null,
+                            // Stocker le Codebureau si fourni dans l'URL
+                            'Codebureau' => $cbParam ?? null,
+                        ]);
+                        
+                        Log::info('New location user created successfully', ['locationId' => $locationId]);
+                    } catch (\Exception $e) {
+                        Log::error('Failed to create location user', [
+                            'locationId' => $locationId,
+                            'error' => $e->getMessage()
+                        ]);
+                        return view('centris.no-access', [
+                            'message' => "Erreur lors de la création de l'accès pour cette location."
+                        ]);
+                    }
+                } else {
+                    // Impossible d'obtenir le token pour cette location
+                    return view('centris.no-access', [
+                        'message' => "Vous n'avez pas accès à ces propriétés. Location introuvable."
+                    ]);
+                }
             }
             
             // Vérifier que l'utilisateur a les credentials GHL nécessaires
             if (!$user->ghl_access_token) {
                 return view('centris.no-access', ['message' => "Configuration GHL manquante pour cet emplacement."]);
             }
+            
+            // Connecter automatiquement l'utilisateur basé sur le locationId
+            Auth::login($user);
+            Log::info('User auto-logged in', ['locationId' => $locationId, 'userId' => $user->id]);
         } else {
             // Si pas de locationId, ne rien afficher
             return view('centris.no-access', ['message' => "Aucun identifiant d'emplacement fourni."]);
         }
-        $agentKey = '76440';
+        // Utiliser le Codebureau de l'utilisateur (lié au locationId) ou celui fourni dans l'URL (cb)
+        $agentKey = $cbParam ?: ($user->Codebureau ?? null);
+        // Si un cb est fourni et diffère de la valeur stockée, la persister
+        if (!empty($cbParam) && $user->Codebureau !== $cbParam) {
+            try {
+                $user->Codebureau = $cbParam;
+                $user->save();
+                Log::info('Codebureau updated from URL parameter', ['locationId' => $locationId, 'cb' => $cbParam]);
+            } catch (\Exception $e) {
+                Log::warning('Failed to persist Codebureau from URL parameter', ['error' => $e->getMessage()]);
+            }
+        }
+        if (empty($agentKey)) {
+            Log::warning('Codebureau manquant pour cet utilisateur/location', [
+                'locationId' => $locationId,
+                'userId' => $user->id ?? null
+            ]);
+            return view('centris.no-access', [
+                'message' => "Codebureau non configuré pour cet emplacement."
+            ]);
+        }
+        // Filtre courtier (MemberKey) optionnel depuis la requête
+        $selectedMemberKey = request()->get('memberKey');
+
         $perPage = 12;
         $page = request()->get('page', 1);
 
-        // Cache plus long pour les propriétés (30 minutes au lieu de 10)
-        $cacheKey = "centris_properties_{$agentKey}";
-        $allProperties = Cache::remember($cacheKey, 1800, function() use ($agentKey) {
-            $url = "https://datadistributionqc.centris.ca/v1/odata/Property?\$filter=ListAgentKey eq '$agentKey'&\$count=true";
-            $apiKey = env('CENTRIS_API_KEY');
+        // Clé API Centris
+        $apiKey = env('CENTRIS_API_KEY');
+
+        // Récupérer et mettre en cache la liste des courtiers (Members) de ce Codebureau
+        $brokers = Cache::remember("centris_members_{$agentKey}", 3600, function() use ($agentKey, $apiKey) {
+            $membersUrl = "https://datadistributionqc.centris.ca/v1/odata/Member?\$filter=OfficeKey eq '$agentKey'";
+            $membersResponse = Http::timeout(60)->withHeaders([
+                'Authorization' => 'Bearer ' . $apiKey,
+                'Accept' => 'application/json',
+            ])->get($membersUrl);
+            $members = $membersResponse->json()['value'] ?? [];
+            // Garder seulement les champs nécessaires
+            return array_map(function($m) {
+                return [
+                    'MemberKey' => $m['MemberKey'] ?? null,
+                    'MemberFullName' => $m['MemberFullName'] ?? 'Sans nom',
+                ];
+            }, $members);
+        });
+
+        // Cache des propriétés (30 min). Clé différente si un courtier est sélectionné
+        $propertiesCacheKey = $selectedMemberKey
+            ? "centris_properties_member_{$selectedMemberKey}"
+            : "centris_properties_office_{$agentKey}";
+
+        $allProperties = Cache::remember($propertiesCacheKey, 1800, function() use ($agentKey, $selectedMemberKey, $apiKey) {
+            // Construire le filtre selon la sélection
+            if (!empty($selectedMemberKey)) {
+                $url = "https://datadistributionqc.centris.ca/v1/odata/Property?\$filter=ListAgentKey eq '$selectedMemberKey'&\$count=true";
+            } else {
+                $url = "https://datadistributionqc.centris.ca/v1/odata/Property?\$filter=ListOfficeKey eq '$agentKey'&\$count=true";
+            }
             $response = Http::timeout(120)->withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
                 'Accept' => 'application/json',
@@ -58,7 +203,7 @@ class CentrisController extends Controller
         $properties = array_slice($allProperties, $offset, $perPage);
 
         $listingKeys = array_column($properties, 'ListingKey');
-        $apiKey = env('CENTRIS_API_KEY');
+    // $apiKey déjà défini plus haut
 
         if (!empty($listingKeys)) {
             $chunks = array_chunk($listingKeys, 3);
@@ -95,21 +240,21 @@ class CentrisController extends Controller
             }
         }
 
-    // Utiliser uniquement id_location de l'utilisateur connecté
-    $idLocation = $user ? $user->id_location : null;
+    // Utiliser l'utilisateur connecté
+    $userId = $user ? $user->id : null;
 
         // Optimisation: charger tous les comptages en une seule requête
-        if ($idLocation) {
+        if ($userId) {
             $listingIds = array_column($properties, 'ListingId');
             
-            $personsCounts = PropertyPerson::where('id_location', $idLocation)
+            $personsCounts = PropertyPerson::where('user_id', $userId)
                 ->whereIn('property_listing_id', $listingIds)
                 ->select('property_listing_id', \DB::raw('count(*) as total'))
                 ->groupBy('property_listing_id')
                 ->pluck('total', 'property_listing_id')
                 ->toArray();
             
-            $opportunitiesCounts = PropertyOpportunity::where('id_location', $idLocation)
+            $opportunitiesCounts = PropertyOpportunity::where('user_id', $userId)
                 ->whereIn('property_listing_id', $listingIds)
                 ->select('property_listing_id', \DB::raw('count(*) as total'))
                 ->groupBy('property_listing_id')
@@ -137,7 +282,7 @@ class CentrisController extends Controller
             'has_next' => $page < $totalPages
         ];
 
-        return view('centris.properties', compact('properties', 'pagination', 'locationId'));
+    return view('centris.properties', compact('properties', 'pagination', 'locationId', 'brokers', 'selectedMemberKey', 'agentKey'));
     }
 
     public function showPropertyDetails($listingKey)
@@ -162,6 +307,10 @@ class CentrisController extends Controller
             if (!$user->ghl_access_token) {
                 return view('centris.no-access', ['message' => "Configuration GHL manquante pour cet emplacement."]);
             }
+            
+            // Connecter automatiquement l'utilisateur basé sur le locationId
+            Auth::login($user);
+            Log::info('User auto-logged in for property details', ['locationId' => $locationId, 'userId' => $user->id]);
         } else {
             // Si pas de locationId, ne rien afficher
             return view('centris.no-access', ['message' => "Aucun identifiant d'emplacement fourni."]);
@@ -195,11 +344,11 @@ class CentrisController extends Controller
             $property['Media'] = [];
         }
 
-    // Utiliser uniquement id_location de l'utilisateur connecté
-    $idLocation = $user ? $user->id_location : null;
+    // Utiliser l'utilisateur connecté
+    $userId = $user ? $user->id : null;
 
         // Charger les personnes et opportunités depuis la base de données
-        $persons = $idLocation ? PropertyPerson::where('id_location', $idLocation)
+        $persons = $userId ? PropertyPerson::where('user_id', $userId)
             ->where('property_listing_id', $property['ListingId'])
             ->orderBy('created_at', 'desc')
             ->get()
@@ -215,7 +364,7 @@ class CentrisController extends Controller
             })
             ->toArray() : [];
 
-        $opportunities = $idLocation ? PropertyOpportunity::where('id_location', $idLocation)
+        $opportunities = $userId ? PropertyOpportunity::where('user_id', $userId)
             ->where('property_listing_id', $property['ListingId'])
             ->orderBy('created_at', 'desc')
             ->get()
@@ -231,6 +380,10 @@ class CentrisController extends Controller
                 ];
             })
             ->toArray() : [];
+
+        // Pour compatibilité avec la vue, garder aussi idLocation
+        $idLocation = $user ? $user->id_location : null;
+        $locationId = request()->query('locationId');
 
         return view('centris.property-details', compact('property', 'persons', 'opportunities', 'idLocation', 'locationId'));
     }

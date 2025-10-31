@@ -9,25 +9,7 @@ use Illuminate\Support\Facades\Log;
 
 class GhlAuthController extends Controller
 {
-    // Redirige l'utilisateur vers la page d'auth GHL
-    public function redirectToGhl(Request $request)
-    {
-        $clientId = env('GHL_CLIENT_ID');
-        $redirectUri = env('GHL_REDIRECT_URI');
-        $state = csrf_token();
-        $scope = 'contacts.readonly opportunities.readonly'; // adapte selon besoin
-        $authUrl = 'https://marketplace.gohighlevel.com/oauth/chooselocation';
-
-        $url = $authUrl . '?' . http_build_query([
-            'response_type' => 'code',
-            'client_id' => $clientId,
-            'redirect_uri' => $redirectUri,
-            'scope' => $scope,
-            'state' => $state,
-        ]);
-        return redirect($url);
-    }
-
+    
     // Callback GHL : échange le code contre un token et le stocke
     public function handleGhlCallback(Request $request)
     {
@@ -70,8 +52,7 @@ class GhlAuthController extends Controller
         $expiresIn = $data['expires_in'] ?? null;
         
         // Pour une installation Company, utiliser userId comme identifiant
-        $userId = $data['userId'] ?? null;
-        $companyId = $data['companyId'] ?? null;
+        $userId = env('companyId');
         $userType = $data['userType'] ?? 'User';
 
         if (!$accessToken || !$userId) {

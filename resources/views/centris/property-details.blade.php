@@ -238,7 +238,8 @@
             background: white;
             border-radius: 12px;
             box-shadow: 0 2px 12px rgba(0,0,0,0.1);
-            overflow: hidden;
+            /* Allow inner dropdowns to overflow */
+            overflow: visible;
             height: 100%;
             display: flex;
             flex-direction: column;
@@ -339,26 +340,40 @@
             width: 100%;
             border-collapse: collapse;
             display: block;
+            border-radius: 8px;
+            overflow: hidden;
         }
 
         thead {
-            background: #f5f5f5;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
             display: table;
             width: 100%;
             table-layout: fixed;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
 
         tbody {
             display: block;
-            max-height: 200px;
+            max-height: 420px;
             overflow-y: auto;
             width: 100%;
+            scroll-behavior: smooth;
         }
+
+        /* Subtle, modern scrollbar */
+        tbody::-webkit-scrollbar { width: 8px; }
+        tbody::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        tbody::-webkit-scrollbar-thumb { background: #c0c0c0; border-radius: 4px; }
+        tbody::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
 
         tbody tr {
             display: table;
             width: 100%;
             table-layout: fixed;
+            transition: all 0.2s ease;
         }
 
         th {
@@ -465,7 +480,7 @@
             margin-top: 4px;
             max-height: 300px;
             overflow-y: auto;
-            z-index: 1500;
+            z-index: 2400;
             animation: slideDown 0.2s ease;
             min-width: 200px;
         }
@@ -569,14 +584,13 @@
 
         .dropdown-menu {
             display: none;
-            position: absolute;
-            right: 0;
-            top: 35px;
+            /* Fixed so it's not clipped by any overflow */
+            position: fixed;
             background: white;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             min-width: 180px;
-            z-index: 100;
+            z-index: 2400;
             overflow: hidden;
             animation: slideDown 0.2s ease;
         }
@@ -1370,20 +1384,42 @@
             pendingDeleteAction = null;
         }
 
-        // Fonction pour gérer le menu déroulant
+        // Fonction pour gérer le menu déroulant (positionné en fixed pour éviter d'être caché)
         function toggleDropdown(event, id, type) {
             event.stopPropagation();
-            
+            const triggerBtn = event.currentTarget;
+            const dropdown = document.getElementById(`dropdown-${type}-${id}`);
+
             // Fermer tous les autres dropdowns
             document.querySelectorAll('.dropdown-menu').forEach(menu => {
-                if (menu.id !== `dropdown-${type}-${id}`) {
+                if (menu !== dropdown) {
                     menu.classList.remove('show');
                 }
             });
-            
-            // Toggle le dropdown actuel
-            const dropdown = document.getElementById(`dropdown-${type}-${id}`);
+
+            const willOpen = !dropdown.classList.contains('show');
             dropdown.classList.toggle('show');
+
+            if (willOpen) {
+                // Calculer la position à l'écran du bouton (viewport coords)
+                const rect = triggerBtn.getBoundingClientRect();
+                // Rendre mesurable
+                dropdown.style.visibility = 'hidden';
+                dropdown.style.display = 'block';
+                const ddWidth = dropdown.offsetWidth || 200;
+                const ddHeight = dropdown.offsetHeight || 120;
+                // Alignement par défaut: droite du bouton
+                let left = rect.right - ddWidth;
+                let top = rect.bottom + 6;
+                // Garder dans le viewport
+                left = Math.max(8, Math.min(left, window.innerWidth - ddWidth - 8));
+                top = Math.max(8, Math.min(top, window.innerHeight - ddHeight - 8));
+                // Appliquer
+                dropdown.style.left = `${left}px`;
+                dropdown.style.top = `${top}px`;
+                dropdown.style.visibility = 'visible';
+                dropdown.style.display = '';
+            }
         }
 
         // Fermer les dropdowns quand on clique ailleurs
@@ -1424,8 +1460,19 @@
                 document.querySelectorAll('.role-select-button').forEach(btn => {
                     btn.classList.remove('active');
                 });
+                // Fermer aussi les menus d'action
+                document.querySelectorAll('.dropdown-menu').forEach(menu => {
+                    menu.classList.remove('show');
+                });
             }
         }, true);
+
+        // Fermer les dropdowns lors d'un resize de la fenêtre (évite des positions invalides)
+        window.addEventListener('resize', function() {
+            document.querySelectorAll('.role-options-dropdown').forEach(dropdown => dropdown.classList.remove('show'));
+            document.querySelectorAll('.role-select-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.dropdown-menu').forEach(menu => menu.classList.remove('show'));
+        });
 
         // Fonction pour créer un custom role selector
         function createRoleSelector(currentRole, personId) {
@@ -1484,9 +1531,41 @@
             // Positionner le dropdown si on l'ouvre
             if (isOpening) {
                 const buttonRect = button.getBoundingClientRect();
-                dropdown.style.top = `${buttonRect.bottom + 4}px`;
-                dropdown.style.left = `${buttonRect.left}px`;
+                // Préparer pour mesure et contraindre la largeur au bouton
+                dropdown.style.visibility = 'hidden';
+                dropdown.style.display = 'block';
                 dropdown.style.width = `${buttonRect.width}px`;
+
+                const ddWidth = dropdown.offsetWidth || buttonRect.width;
+                const ddHeight = dropdown.offsetHeight || 200;
+                const margin = 8;
+
+                // Espace disponible
+                const spaceBelow = window.innerHeight - buttonRect.bottom - margin;
+                const spaceAbove = buttonRect.top - margin;
+
+                // Horizontale: garder dans le viewport
+                let left = Math.max(margin, Math.min(buttonRect.left, window.innerWidth - ddWidth - margin));
+
+                // Choisir d'ouvrir au-dessus si pas assez de place en bas
+                const openAbove = ddHeight > spaceBelow && spaceAbove > spaceBelow;
+                let top;
+                let maxHeight;
+                if (openAbove) {
+                    maxHeight = Math.max(160, Math.min(ddHeight, spaceAbove));
+                    top = Math.max(margin, buttonRect.top - maxHeight - 4);
+                } else {
+                    maxHeight = Math.max(160, Math.min(ddHeight, spaceBelow));
+                    top = Math.min(window.innerHeight - margin - maxHeight, buttonRect.bottom + 4);
+                }
+
+                dropdown.style.left = `${left}px`;
+                dropdown.style.top = `${top}px`;
+                dropdown.style.maxHeight = `${maxHeight}px`;
+
+                // Afficher
+                dropdown.style.visibility = 'visible';
+                dropdown.style.display = '';
             }
         }
 

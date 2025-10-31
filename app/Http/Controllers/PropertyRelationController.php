@@ -18,14 +18,13 @@ class PropertyRelationController extends Controller
     {
         try {
             $user = auth()->user();
-            $idLocation = $user ? ($user->ghl_location_id ?? $user->id_location ?? null) : null;
-            if (!$idLocation) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Utilisateur non connecté ou id_location manquant'
+                    'message' => 'Utilisateur non connecté'
                 ], 400);
             }
-            $persons = PropertyPerson::where('id_location', $idLocation)
+            $persons = PropertyPerson::where('user_id', $user->id)
                 ->where('property_listing_id', $listingId)
                 ->orderBy('created_at', 'desc')
                 ->get();
@@ -64,11 +63,17 @@ class PropertyRelationController extends Controller
         }
 
         try {
-            $idLocation = $request->id_location;
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Utilisateur non connecté'
+                ], 400);
+            }
             
             $person = PropertyPerson::updateOrCreate(
                 [
-                    'id_location' => $idLocation,
+                    'user_id' => $user->id,
                     'property_listing_id' => $request->property_listing_id,
                     'contact_id' => $request->contact_id
                 ],
@@ -110,10 +115,16 @@ class PropertyRelationController extends Controller
         }
 
         try {
-            $idLocation = $request->id_location;
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Utilisateur non connecté'
+                ], 400);
+            }
             
             $person = PropertyPerson::where('id', $id)
-                ->where('id_location', $idLocation)
+                ->where('user_id', $user->id)
                 ->firstOrFail();
             $person->implication = $request->implication;
             $person->save();
@@ -136,17 +147,17 @@ class PropertyRelationController extends Controller
     public function removePerson(Request $request, $id)
     {
         try {
-            $idLocation = $request->query('id_location');
+            $user = auth()->user();
             
-            if (!$idLocation) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'id_location manquant'
+                    'message' => 'Utilisateur non connecté'
                 ], 400);
             }
             
             $person = PropertyPerson::where('id', $id)
-                ->where('id_location', $idLocation)
+                ->where('user_id', $user->id)
                 ->firstOrFail();
             $person->delete();
             return response()->json([
@@ -170,14 +181,13 @@ class PropertyRelationController extends Controller
     {
         try {
             $user = auth()->user();
-            $idLocation = $user ? ($user->ghl_location_id ?? $user->id_location ?? null) : null;
-            if (!$idLocation) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Utilisateur non connecté ou id_location manquant'
+                    'message' => 'Utilisateur non connecté'
                 ], 400);
             }
-            $opportunities = PropertyOpportunity::where('id_location', $idLocation)
+            $opportunities = PropertyOpportunity::where('user_id', $user->id)
                 ->where('property_listing_id', $listingId)
                 ->orderBy('created_at', 'desc')
                 ->get();
@@ -218,11 +228,17 @@ class PropertyRelationController extends Controller
         }
 
         try {
-            $idLocation = $request->id_location;
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Utilisateur non connecté'
+                ], 400);
+            }
             
             $opportunity = PropertyOpportunity::updateOrCreate(
                 [
-                    'id_location' => $idLocation,
+                    'user_id' => $user->id,
                     'property_listing_id' => $request->property_listing_id,
                     'opportunity_id' => $request->opportunity_id
                 ],
@@ -254,17 +270,17 @@ class PropertyRelationController extends Controller
     public function removeOpportunity(Request $request, $id)
     {
         try {
-            $idLocation = $request->query('id_location');
+            $user = auth()->user();
             
-            if (!$idLocation) {
+            if (!$user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'id_location manquant'
+                    'message' => 'Utilisateur non connecté'
                 ], 400);
             }
             
             $opportunity = PropertyOpportunity::where('id', $id)
-                ->where('id_location', $idLocation)
+                ->where('user_id', $user->id)
                 ->firstOrFail();
             $opportunity->delete();
             return response()->json([

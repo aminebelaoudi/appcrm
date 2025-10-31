@@ -21,6 +21,7 @@ class User extends Authenticatable
         'ghl_access_token',
         'ghl_refresh_token',
         'ghl_token_expires_at',
+        'Codebureau',
     ];
 
     /**

@@ -9,7 +9,7 @@ class PropertyOpportunity extends Model
     protected $table = 'property_opportunities';
     
     protected $fillable = [
-        'id_location',
+        'user_id',
         'property_listing_id',
         'opportunity_id',
         'name',
@@ -31,6 +31,6 @@ class PropertyOpportunity extends Model
      */
     public function user()
     {
-        return $this->belongsTo(User::class, 'id_location', 'id_location');
+        return $this->belongsTo(\App\User::class, 'user_id', 'id');
     }
 }

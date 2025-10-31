@@ -9,7 +9,7 @@ class PropertyPerson extends Model
     protected $table = 'property_persons';
     
     protected $fillable = [
-        'id_location',
+        'user_id',
         'property_listing_id',
         'contact_id',
         'name',
@@ -28,6 +28,6 @@ class PropertyPerson extends Model
      */
     public function user()
     {
-        return $this->belongsTo(User::class, 'id_location', 'id_location');
+        return $this->belongsTo(\App\User::class, 'user_id', 'id');
     }
 }
