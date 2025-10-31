@@ -705,7 +705,7 @@
         @if(count($properties) > 0)
             <div class="properties-grid">
                 @foreach($properties as $property)
-                    <div class="property-card" data-property-id="{{ $property['ListingKey'] ?? '' }}" onclick="window.location.href='{{ route('centris.property.details', ['listingKey' => $property['ListingKey'] ?? '', 'locationId' => $locationId]) }}'" >
+                    <div class="property-card" data-property-id="{{ $property['ListingKey'] ?? '' }}" onclick="navigateToProperty('{{ route('centris.property.details', ['listingKey' => $property['ListingKey'] ?? '', 'locationId' => $locationId]) }}')" >
                         <div class="image-container">
                             @if(isset($property['Media']) && count($property['Media']) > 0)
                                 @foreach($property['Media'] as $index => $media)
@@ -805,6 +805,19 @@
 
     <script>
     let currentStatusFilter = '';
+
+        // Utility to show the page loader with a custom message
+        function showPageLoader(message) {
+            const overlay = document.getElementById('pageLoader');
+            const messageEl = document.getElementById('loaderMessage');
+            if (!overlay) return;
+            if (messageEl && message) {
+                messageEl.innerHTML = `${message} <span class="loader-dots"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span></span>`;
+            }
+            overlay.classList.remove('hidden');
+            overlay.style.opacity = '1';
+            overlay.style.pointerEvents = 'auto';
+        }
 
         function toggleDropdown() {
             const select = document.getElementById('customSelect');
@@ -943,6 +956,9 @@
             document.getElementById('brokerSelect')?.classList.remove('open');
             document.getElementById('brokerDropdown')?.classList.remove('open');
 
+            // Show loader while navigating to filtered results
+            showPageLoader(memberKey ? 'Filtrage des propriétés par courtier' : 'Chargement de toutes les propriétés');
+
             // Build URL params: keep locationId, reset page, set/remove memberKey
             const params = new URLSearchParams(window.location.search);
             params.set('locationId', '{{ $locationId }}');
@@ -953,6 +969,12 @@
                 params.delete('memberKey');
             }
             window.location.search = params.toString();
+        }
+
+        // Navigate to property details with loader
+        function navigateToProperty(url) {
+            showPageLoader('Ouverture de la fiche propriété');
+            window.location.href = url;
         }
 
         // Filtrer les courtiers par nom
@@ -999,20 +1021,14 @@
                 }
             }, 2500);
             
-            // Cacher le loader quand le contenu est chargé
+            // Cacher (mais ne pas supprimer) le loader quand le contenu est chargé
             window.addEventListener('load', () => {
                 clearInterval(messageInterval);
                 
                 // Attendre un peu pour que l'utilisateur voie le dernier message
                 setTimeout(() => {
                     if (loaderOverlay) {
-                        loaderOverlay.style.opacity = '0';
-                        loaderOverlay.style.pointerEvents = 'none';
-                        
-                        // Retirer complètement du DOM après la transition
-                        setTimeout(() => {
-                            loaderOverlay.remove();
-                        }, 500);
+                        loaderOverlay.classList.add('hidden');
                     }
                 }, 300);
             });
@@ -1020,12 +1036,8 @@
             // Fallback: cacher le loader après 15 secondes maximum (au cas où)
             setTimeout(() => {
                 clearInterval(messageInterval);
-                if (loaderOverlay && loaderOverlay.style.opacity !== '0') {
-                    loaderOverlay.style.opacity = '0';
-                    loaderOverlay.style.pointerEvents = 'none';
-                    setTimeout(() => {
-                        loaderOverlay.remove();
-                    }, 500);
+                if (loaderOverlay && !loaderOverlay.classList.contains('hidden')) {
+                    loaderOverlay.classList.add('hidden');
                 }
             }, 15000);
         })();
