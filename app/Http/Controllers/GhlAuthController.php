@@ -10,6 +10,66 @@ use Illuminate\Support\Facades\Log;
 class GhlAuthController extends Controller
 {
     
+    /**
+     * Rafraîchit le token GHL d'un utilisateur
+     * 
+     * @param \App\User $user
+     * @return bool
+     */
+    public static function refreshUserToken($user)
+    {
+        if (!$user->ghl_refresh_token) {
+            Log::warning("Utilisateur {$user->id} n'a pas de refresh_token");
+            return false;
+        }
+
+        $clientId = env('GHL_CLIENT_ID');
+        $clientSecret = env('GHL_CLIENT_SECRET');
+
+        // Appel à l'API GHL pour rafraîchir le token
+        $response = Http::asForm()->post('https://services.leadconnectorhq.com/oauth/token', [
+            'grant_type' => 'refresh_token',
+            'user_type' => 'Company',
+            'refresh_token' => $user->ghl_refresh_token,
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+        ]);
+
+        if (!$response->ok()) {
+            Log::error("Échec du rafraîchissement du token GHL pour l'utilisateur {$user->id}", [
+                'status' => $response->status(),
+                'response' => $response->body()
+            ]);
+            return false;
+        }
+
+        $data = $response->json();
+        $accessToken = $data['access_token'] ?? null;
+        $refreshToken = $data['refresh_token'] ?? null;
+        $expiresIn = $data['expires_in'] ?? null;
+
+        if (!$accessToken) {
+            Log::error("Token d'accès manquant dans la réponse pour l'utilisateur {$user->id}");
+            return false;
+        }
+
+        // Mettre à jour les tokens
+        $user->ghl_access_token = $accessToken;
+        if ($refreshToken) {
+            $user->ghl_refresh_token = $refreshToken;
+        }
+        if ($expiresIn) {
+            $user->ghl_token_expires_at = now()->addSeconds($expiresIn);
+        }
+        $user->save();
+
+        Log::info("Token GHL rafraîchi avec succès pour l'utilisateur {$user->id}", [
+            'expires_at' => $user->ghl_token_expires_at
+        ]);
+
+        return true;
+    }
+    
     // Callback GHL : échange le code contre un token et le stocke
     public function handleGhlCallback(Request $request)
     {
