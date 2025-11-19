@@ -24,10 +24,7 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // Rafraîchir les tokens GHL tous les jours à minuit
-        $schedule->command('ghl:refresh-tokens')
-                 ->dailyAt('00:00')
-                 ->timezone('America/Montreal');
+        // $schedule->command('inspire')->hourly();
     }
 
     /**
