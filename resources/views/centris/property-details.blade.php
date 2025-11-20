@@ -1312,9 +1312,14 @@
         
         let selectedContact = null;
         let allContacts = [];
+        let contactsCache = null; // Cache pour les contacts GHL
+        let contactsLastLoaded = 0; // Timestamp du dernier chargement
+        const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes en millisecondes
         let currentPersons = @json($persons ?? []);
         let selectedOpportunity = null;
         let allOpportunities = [];
+        let opportunitiesCache = null; // Cache pour les opportunités GHL
+        let opportunitiesLastLoaded = 0;
         let currentOpportunities = @json($opportunities ?? []);
 
         // Liste des rôles avec emojis
@@ -1677,7 +1682,7 @@
             const modal = document.getElementById('addPersonModal');
             modal.classList.add('show');
             
-            // Charger les contacts depuis l'API GHL
+            // Charger les contacts depuis l'API GHL (avec cache)
             await loadGHLContacts();
         }
 
@@ -1694,7 +1699,21 @@
 
         async function loadGHLContacts() {
             const container = document.getElementById('contactListContainer');
-            container.innerHTML = '<div class="loading">Chargement des contacts</div>';
+            
+            // Vérifier si on a un cache valide
+            const now = Date.now();
+            if (contactsCache && (now - contactsLastLoaded) < CACHE_DURATION) {
+                console.log('Utilisation du cache des contacts');
+                // Filtrer les contacts qui ne sont pas déjà dans currentPersons
+                const availableContacts = contactsCache.filter(contact => {
+                    return !currentPersons.some(p => p.contact_id === contact.id);
+                });
+                allContacts = availableContacts;
+                displayContacts(allContacts);
+                return;
+            }
+
+            container.innerHTML = '<div class="loading">Chargement des contacts...</div>';
 
             try {
                 // Appeler notre API Laravel au lieu de l'API GHL directement
@@ -1715,9 +1734,13 @@
                     throw new Error(data.message || 'Erreur inconnue');
                 }
 
+                // Mettre en cache
+                contactsCache = data.contacts;
+                contactsLastLoaded = Date.now();
+
                 // Filtrer les contacts qui ne sont pas déjà dans currentPersons
                 const availableContacts = data.contacts.filter(contact => {
-                    return !currentPersons.some(p => p.contactId === contact.id);
+                    return !currentPersons.some(p => p.contact_id === contact.id);
                 });
 
                 allContacts = availableContacts;
@@ -1968,10 +1991,16 @@
                 menu.classList.remove('show');
             });
             
-            // Pour l'instant, juste un placeholder (vous pouvez implémenter la logique plus tard)
-            console.log('Voir personne ID:', personId);
-            // Vous pouvez rediriger vers une page de détails ou ouvrir un modal
-            // window.location.href = '#'; 
+            // Trouver la personne pour obtenir son contact_id
+            const person = currentPersons.find(p => p.id === personId);
+            const contactId = person?.contact_id || person?.contactId;
+            if (person && contactId) {
+                // Ouvrir le contact dans GHL dans une nouvelle page
+                const url = `https://go.optimocrm.com/v2/location/${idLocation}/contacts/detail/${contactId}`;
+                window.open(url, '_blank');
+            } else {
+                alert('ID du contact introuvable');
+            }
         }
 
         // Fonction pour confirmer la suppression d'une personne
@@ -2075,7 +2104,7 @@
             const modal = document.getElementById('addOpportunityModal');
             modal.classList.add('show');
             
-            // Charger les opportunités depuis l'API GHL
+            // Charger les opportunités depuis l'API GHL (avec cache)
             await loadGHLOpportunities();
         }
 
@@ -2092,7 +2121,21 @@
 
         async function loadGHLOpportunities() {
             const container = document.getElementById('opportunityListContainer');
-            container.innerHTML = '<div class="loading">Chargement des opportunités</div>';
+            
+            // Vérifier si on a un cache valide
+            const now = Date.now();
+            if (opportunitiesCache && (now - opportunitiesLastLoaded) < CACHE_DURATION) {
+                console.log('Utilisation du cache des opportunités');
+                // Filtrer les opportunités qui ne sont pas déjà ajoutées
+                const availableOpportunities = opportunitiesCache.filter(opp => {
+                    return !currentOpportunities.some(co => co.opportunity_id === opp.id);
+                });
+                allOpportunities = availableOpportunities;
+                displayOpportunities(allOpportunities);
+                return;
+            }
+
+            container.innerHTML = '<div class="loading">Chargement des opportunités...</div>';
 
             try {
                 // Appeler notre API Laravel
@@ -2114,12 +2157,15 @@
                 }
 
                 // Les opportunités viennent directement de la réponse
-                // (la même API retourne opportunities avec contacts dedans)
                 const opportunitiesData = data.opportunities || [];
+
+                // Mettre en cache
+                opportunitiesCache = opportunitiesData;
+                opportunitiesLastLoaded = Date.now();
 
                 // Filtrer les opportunités qui ne sont pas déjà ajoutées
                 const availableOpportunities = opportunitiesData.filter(opp => {
-                    return !currentOpportunities.some(co => co.id === opp.id);
+                    return !currentOpportunities.some(co => co.opportunity_id === opp.id);
                 });
 
                 allOpportunities = availableOpportunities;
@@ -2372,10 +2418,16 @@
                 menu.classList.remove('show');
             });
             
-            // Pour l'instant, juste un placeholder (vous pouvez implémenter la logique plus tard)
-            console.log('Voir opportunité ID:', opportunityId);
-            // Vous pouvez rediriger vers une page de détails ou ouvrir un modal
-            // window.location.href = '#'; 
+            // Trouver l'opportunité pour obtenir son opportunity_id
+            const opportunity = currentOpportunities.find(o => o.id === opportunityId);
+            const oppId = opportunity?.opportunity_id || opportunity?.opportunityId;
+            if (opportunity && oppId) {
+                // Ouvrir l'opportunité dans GHL dans une nouvelle page
+                const url = `https://go.optimocrm.com/v2/location/${idLocation}/opportunities/list/${oppId}`;
+                window.open(url, '_blank');
+            } else {
+                alert('ID de l\'opportunité introuvable');
+            }
         }
 
         // Fonction pour confirmer la suppression d'une opportunité
