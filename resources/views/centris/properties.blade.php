@@ -745,20 +745,37 @@
                             <div class="status-badge-overlay {{ $statusClass }}">{{ $statusText }}</div>
                         </div>
                         
-                        <div class="property-info">                    
-                            <div class="address">      
-                                {{ $property['StreetNumberStart'] ?? '' }}
-                                @if(isset($property['StreetNumberEnd']) && $property['StreetNumberEnd'])
-                                    - {{ $property['StreetNumberEnd'] }}
-                                @endif
-                                , {{ $property['StreetShortName'] ?? '' }}
-                                @if(isset($property['Township']) && $property['Township'])
-                                    , {{ $property['Township'] }}
-                                @endif
-                                @if(isset($property['PostalCode']) && $property['PostalCode'])
-                                    , {{ $property['PostalCode'] }}
-                                @endif
-                            </div>
+                        <div class="property-info">
+                            @php
+                                $addressParts = [];
+                                
+                                // Numéro de rue
+                                if (!empty($property['StreetNumberStart'])) {
+                                    $streetNumber = $property['StreetNumberStart'];
+                                    if (!empty($property['StreetNumberEnd'])) {
+                                        $streetNumber .= ' - ' . $property['StreetNumberEnd'];
+                                    }
+                                    $addressParts[] = $streetNumber;
+                                }
+                                
+                                // Nom de rue
+                                if (!empty($property['StreetShortName'])) {
+                                    $addressParts[] = $property['StreetShortName'];
+                                }
+                                
+                                // Ville
+                                if (!empty($property['Township'])) {
+                                    $addressParts[] = $property['Township'];
+                                }
+                                
+                                // Code postal
+                                if (!empty($property['PostalCode'])) {
+                                    $addressParts[] = $property['PostalCode'];
+                                }
+                                
+                                $fullAddress = implode(', ', $addressParts);
+                            @endphp                    
+                            <div class="address">{{ $fullAddress }}</div>
                          
                             <div class="features">
                                 <div class="feature">

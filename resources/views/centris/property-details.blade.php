@@ -1018,19 +1018,36 @@
                 </div>
                 
                 <div class="property-info-section">
-                    <h1>
-                        {{ $property['StreetNumberStart'] ?? '' }}
-                        @if(isset($property['StreetNumberEnd']) && $property['StreetNumberEnd'])
-                            - {{ $property['StreetNumberEnd'] }}
-                        @endif
-                        , {{ $property['StreetShortName'] ?? '' }}
-                        @if(isset($property['Township']) && $property['Township'])
-                            , {{ $property['Township'] }}
-                        @endif
-                        @if(isset($property['PostalCode']) && $property['PostalCode'])
-                            , {{ $property['PostalCode'] }}
-                        @endif
-                    </h1>
+                    @php
+                        $addressParts = [];
+                        
+                        // Numéro de rue
+                        if (!empty($property['StreetNumberStart'])) {
+                            $streetNumber = $property['StreetNumberStart'];
+                            if (!empty($property['StreetNumberEnd'])) {
+                                $streetNumber .= ' - ' . $property['StreetNumberEnd'];
+                            }
+                            $addressParts[] = $streetNumber;
+                        }
+                        
+                        // Nom de rue
+                        if (!empty($property['StreetShortName'])) {
+                            $addressParts[] = $property['StreetShortName'];
+                        }
+                        
+                        // Ville
+                        if (!empty($property['Township'])) {
+                            $addressParts[] = $property['Township'];
+                        }
+                        
+                        // Code postal
+                        if (!empty($property['PostalCode'])) {
+                            $addressParts[] = $property['PostalCode'];
+                        }
+                        
+                        $fullAddress = implode(', ', $addressParts);
+                    @endphp
+                    <h1>{{ $fullAddress }}</h1>
                     
                     @php
                         $price = $property['ListPrice'] ?? $property['RentPrice'] ?? 0;
