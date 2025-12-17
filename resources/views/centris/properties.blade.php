@@ -748,10 +748,16 @@
                         <div class="property-info">                    
                             <div class="address">      
                                 {{ $property['StreetNumberStart'] ?? '' }}
-                                @if(isset($property['StreetNumberEnd']))
-                                    -{{ $property['StreetNumberEnd'] }}
+                                @if(isset($property['StreetNumberEnd']) && $property['StreetNumberEnd'])
+                                    - {{ $property['StreetNumberEnd'] }}
                                 @endif
                                 , {{ $property['StreetShortName'] ?? '' }}
+                                @if(isset($property['Township']) && $property['Township'])
+                                    , {{ $property['Township'] }}
+                                @endif
+                                @if(isset($property['PostalCode']) && $property['PostalCode'])
+                                    , {{ $property['PostalCode'] }}
+                                @endif
                             </div>
                          
                             <div class="features">

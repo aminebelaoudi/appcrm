@@ -1021,9 +1021,15 @@
                     <h1>
                         {{ $property['StreetNumberStart'] ?? '' }}
                         @if(isset($property['StreetNumberEnd']) && $property['StreetNumberEnd'])
-                            -{{ $property['StreetNumberEnd'] }}
+                            - {{ $property['StreetNumberEnd'] }}
                         @endif
                         , {{ $property['StreetShortName'] ?? '' }}
+                        @if(isset($property['Township']) && $property['Township'])
+                            , {{ $property['Township'] }}
+                        @endif
+                        @if(isset($property['PostalCode']) && $property['PostalCode'])
+                            , {{ $property['PostalCode'] }}
+                        @endif
                     </h1>
                     
                     @php
