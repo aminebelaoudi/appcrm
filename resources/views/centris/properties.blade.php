@@ -611,8 +611,8 @@
     </style>
 </head>
 <body>
-    <!-- Loader overlay -->
-    <div class="loader-overlay" id="pageLoader">
+    <!-- Loader overlay - visible immédiatement au chargement de la page -->
+    <div class="loader-overlay" id="pageLoader" style="display: flex;">
         <div class="loader-content">
             <div class="loader-spinner"></div>
             <div class="loader-title">Chargement en cours</div>
