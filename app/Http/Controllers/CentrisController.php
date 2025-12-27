@@ -381,11 +381,49 @@ class CentrisController extends Controller
             })
             ->toArray() : [];
 
+        // Récupérer le nom du member (courtier/agent)
+        $memberName = '';
+        $apiKey = env('CENTRIS_API_KEY');
+        
+        // Vérifier les clés possibles pour trouver l'agent
+        $agentKey = $property['ListAgentKey'] ?? null;
+        
+        if (!empty($agentKey)) {
+            try {
+                // Utiliser le même format que dans showProperties: filtre avec MemberKey
+                $apiUrl = "https://datadistributionqc.centris.ca/v1/odata/Member?\$filter=MemberKey eq '{$agentKey}'";
+                Log::info('Fetching member info from API', ['url' => $apiUrl, 'agentKey' => $agentKey]);
+                
+                $memberResponse = Http::timeout(10)->withHeaders([
+                    'Authorization' => 'Bearer ' . $apiKey,
+                    'Accept' => 'application/json',
+                ])->get($apiUrl);
+                
+                Log::info('Member API response status', ['status' => $memberResponse->status()]);
+                
+                if ($memberResponse->successful()) {
+                    $responseData = $memberResponse->json();
+                    Log::info('Member API response data', ['data' => $responseData]);
+                    
+                    // Récupérer le premier résultat du tableau 'value'
+                    if (isset($responseData['value']) && is_array($responseData['value']) && count($responseData['value']) > 0) {
+                        $memberName = $responseData['value'][0]['MemberFullName'] ?? '';
+                        Log::info('Member name extracted', ['memberName' => $memberName]);
+                    }
+                }
+            } catch (\Exception $e) {
+                // Si l'API échoue, continuer sans afficher le nom
+                Log::warning('Failed to fetch member info', ['agentKey' => $agentKey, 'error' => $e->getMessage()]);
+            }
+        } else {
+            Log::warning('ListAgentKey is empty or not found in property', ['ListingId' => $property['ListingId'] ?? 'unknown']);
+        }
+
         // Pour compatibilité avec la vue, garder aussi idLocation
         $idLocation = $user ? $user->id_location : null;
         $locationId = request()->query('locationId');
 
-        return view('centris.property-details', compact('property', 'persons', 'opportunities', 'idLocation', 'locationId'));
+        return view('centris.property-details', compact('property', 'persons', 'opportunities', 'idLocation', 'locationId', 'memberName'));
     }
 
     public function getGHLContacts()

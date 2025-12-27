@@ -1074,6 +1074,20 @@
                             <span>{{ $property['LivingArea'] ?? 0 }}</span>
                         </div>
                     </div>
+                    
+                    {{-- Afficher le nom du member (agent) --}}
+                    {{-- DEBUG: --}}
+                    <!-- memberName value: "{{ $memberName ?? 'NULL' }}" -->
+                    <!-- ListAgentKey: "{{ $property['ListAgentKey'] ?? 'NOT FOUND' }}" -->
+                    
+                    @if(!empty($memberName))
+                        <div style="margin-top: 12px; padding: 10px 12px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 6px; border-left: 3px solid #e31c23;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span style="font-size: 12px; color: #999; font-weight: 600;letter-spacing: 0.5px;">Courtier :</span>
+                                <span style="font-size: 14px; color: #333; font-weight: 500;">{{ $memberName }}</span>
+                            </div>
+                        </div>
+                    @endif
                 </div>
             </div>
 
