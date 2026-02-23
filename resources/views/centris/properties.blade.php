@@ -634,11 +634,12 @@
         <div class="filters-bar">
             <div class="search-container">
                 <span class="search-icon">🔍</span>
-                <input type="text" 
-                       class="search-input" 
-                       id="searchInput" 
-                       placeholder="Rechercher par adresse, ville..."
-                       onkeyup="filterProperties()">
+                  <input type="text" 
+                      class="search-input" 
+                      id="searchInput" 
+                      placeholder="Rechercher par adresse, ville..."
+                      value="{{ $search ?? '' }}"
+                      oninput="scheduleSearch()">
                 <button class="clear-search" id="clearSearch" onclick="clearSearch()">×</button>
             </div>
             
@@ -801,7 +802,7 @@
         @if(isset($pagination) && $pagination['total_pages'] > 1)
             <div class="pagination">
                 @if($pagination['has_prev'])
-                    <a href="?locationId={{ $locationId }}&page={{ $pagination['current_page'] - 1 }}{{ !empty($selectedMemberKey) ? '&memberKey='.$selectedMemberKey : '' }}">‹ Précédent</a>
+                    <a href="?locationId={{ $locationId }}&page={{ $pagination['current_page'] - 1 }}{{ !empty($selectedMemberKey) ? '&memberKey='.$selectedMemberKey : '' }}{{ !empty($search ?? '') ? '&search='.urlencode($search) : '' }}">‹ Précédent</a>
                 @else
                     <span class="disabled">‹ Précédent</span>
                 @endif
@@ -810,12 +811,12 @@
                     @if($i == $pagination['current_page'])
                         <span class="active">{{ $i }}</span>
                     @else
-                        <a href="?locationId={{ $locationId }}&page={{ $i }}{{ !empty($selectedMemberKey) ? '&memberKey='.$selectedMemberKey : '' }}">{{ $i }}</a>
+                        <a href="?locationId={{ $locationId }}&page={{ $i }}{{ !empty($selectedMemberKey) ? '&memberKey='.$selectedMemberKey : '' }}{{ !empty($search ?? '') ? '&search='.urlencode($search) : '' }}">{{ $i }}</a>
                     @endif
                 @endfor
 
                 @if($pagination['has_next'])
-                    <a href="?locationId={{ $locationId }}&page={{ $pagination['current_page'] + 1 }}{{ !empty($selectedMemberKey) ? '&memberKey='.$selectedMemberKey : '' }}">Suivant ›</a>
+                    <a href="?locationId={{ $locationId }}&page={{ $pagination['current_page'] + 1 }}{{ !empty($selectedMemberKey) ? '&memberKey='.$selectedMemberKey : '' }}{{ !empty($search ?? '') ? '&search='.urlencode($search) : '' }}">Suivant ›</a>
                 @else
                     <span class="disabled">Suivant ›</span>
                 @endif
@@ -828,6 +829,7 @@
 
     <script>
     let currentStatusFilter = '';
+    let searchTimer = null;
 
         // Utility to show the page loader with a custom message
         function showPageLoader(message) {
@@ -881,39 +883,47 @@
         });
 
         function filterProperties() {
-            const searchValue = document.getElementById('searchInput').value.toLowerCase();
             const cards = document.querySelectorAll('.property-card');
-            let visibleCount = 0;
-            
-            // Afficher/masquer le bouton clear
-            const clearBtn = document.getElementById('clearSearch');
-            clearBtn.style.display = searchValue ? 'block' : 'none';
-            
             cards.forEach(card => {
-                const address = card.querySelector('.address')?.textContent.toLowerCase() || '';
                 const statusBadge = card.querySelector('.status-badge-overlay')?.textContent.toLowerCase() || '';
-                
-                // Convertir le statut badge en valeur de filtre
                 let cardStatus = '';
                 if (statusBadge.includes('vendu')) cardStatus = 'sold';
                 else if (statusBadge.includes('hors marché') || statusBadge.includes('hors marche')) cardStatus = 'pending';
                 else if (statusBadge.includes('en vigueur')) cardStatus = 'active';
-                
-                const matchesSearch = !searchValue || address.includes(searchValue);
+
                 const matchesStatus = !currentStatusFilter || cardStatus === currentStatusFilter;
-                
-                if (matchesSearch && matchesStatus) {
-                    card.style.display = '';
-                    visibleCount++;
-                } else {
-                    card.style.display = 'none';
-                }
+                card.style.display = matchesStatus ? '' : 'none';
             });
         }
         
         function clearSearch() {
-            document.getElementById('searchInput').value = '';
-            filterProperties();
+            const input = document.getElementById('searchInput');
+            if (input) input.value = '';
+            applySearch('');
+        }
+
+        function scheduleSearch() {
+            const input = document.getElementById('searchInput');
+            const value = input ? input.value.trim() : '';
+
+            const clearBtn = document.getElementById('clearSearch');
+            if (clearBtn) clearBtn.style.display = value ? 'block' : 'none';
+
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => applySearch(value), 400);
+        }
+
+        function applySearch(value) {
+            showPageLoader(value ? 'Recherche des propriétés' : 'Chargement de toutes les propriétés');
+            const params = new URLSearchParams(window.location.search);
+            params.set('locationId', '{{ $locationId }}');
+            params.delete('page');
+            if (value) {
+                params.set('search', value);
+            } else {
+                params.delete('search');
+            }
+            window.location.search = params.toString();
         }
 
         function changeImage(button, direction) {
@@ -1018,6 +1028,13 @@
                 filterBrokerOptions(e.target.value);
             }
         });
+
+        (function() {
+            const input = document.getElementById('searchInput');
+            const clearBtn = document.getElementById('clearSearch');
+            const value = input ? input.value.trim() : '';
+            if (clearBtn) clearBtn.style.display = value ? 'block' : 'none';
+        })();
 
         // === Gestion du loader de page ===
         (function() {

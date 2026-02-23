@@ -155,6 +155,7 @@ class CentrisController extends Controller
         }
         // Filtre courtier (MemberKey) optionnel depuis la requête
         $selectedMemberKey = request()->get('memberKey');
+        $search = trim((string) request()->get('search', ''));
 
         $perPage = 12;
         $page = request()->get('page', 1);
@@ -197,6 +198,44 @@ class CentrisController extends Controller
             ])->get($url);
             return $response->json()['value'] ?? [];
         });
+
+        if ($search !== '') {
+            $searchLower = function_exists('mb_strtolower') ? mb_strtolower($search) : strtolower($search);
+            $allProperties = array_values(array_filter($allProperties, function($property) use ($searchLower) {
+                $parts = [];
+
+                if (!empty($property['StreetNumberStart'])) {
+                    $streetNumber = $property['StreetNumberStart'];
+                    if (!empty($property['StreetNumberEnd'])) {
+                        $streetNumber .= ' ' . $property['StreetNumberEnd'];
+                    }
+                    $parts[] = $streetNumber;
+                }
+                if (!empty($property['StreetShortName'])) {
+                    $parts[] = $property['StreetShortName'];
+                }
+                if (!empty($property['Township'])) {
+                    $parts[] = $property['Township'];
+                }
+                if (!empty($property['PostalCode'])) {
+                    $parts[] = $property['PostalCode'];
+                }
+                if (!empty($property['MlsNumber'])) {
+                    $parts[] = $property['MlsNumber'];
+                }
+                if (!empty($property['ListingId'])) {
+                    $parts[] = $property['ListingId'];
+                }
+                if (!empty($property['ListingKey'])) {
+                    $parts[] = $property['ListingKey'];
+                }
+
+                $haystack = implode(' ', $parts);
+                $haystack = function_exists('mb_strtolower') ? mb_strtolower($haystack) : strtolower($haystack);
+
+                return $haystack !== '' && strpos($haystack, $searchLower) !== false;
+            }));
+        }
 
         $totalCount = count($allProperties);
         $offset = ($page - 1) * $perPage;
@@ -282,7 +321,7 @@ class CentrisController extends Controller
             'has_next' => $page < $totalPages
         ];
 
-    return view('centris.properties', compact('properties', 'pagination', 'locationId', 'brokers', 'selectedMemberKey', 'agentKey'));
+    return view('centris.properties', compact('properties', 'pagination', 'locationId', 'brokers', 'selectedMemberKey', 'agentKey', 'search'));
     }
 
     public function showPropertyDetails($listingKey)
@@ -431,6 +470,8 @@ class CentrisController extends Controller
         try {
             // Vérifier si un locationId est fourni dans l'URL
             $locationId = request()->query('locationId');
+            $page = request()->query('page', 1);
+            $pageSize = 100; // Charger 100 contacts par page
             
             if ($locationId) {
                 // Rechercher l'utilisateur avec cet id_location dans la BD
@@ -450,19 +491,6 @@ class CentrisController extends Controller
                 ], 400);
             }
             
-            // Vérifier si les données sont en cache (5 minutes)
-            $cacheKey = 'ghl_contacts_list_' . $user->id;
-            $cachedContacts = \Cache::get($cacheKey);
-            if ($cachedContacts) {
-                return response()->json([
-                    'success' => true,
-                    'contacts' => $cachedContacts['contacts'] ?? $cachedContacts,
-                    'opportunities' => $cachedContacts['opportunities'] ?? [],
-                    'total' => count($cachedContacts['contacts'] ?? $cachedContacts),
-                    'cached' => true
-                ]);
-            }
-
             $ghlToken = $user->ghl_access_token;
             $ghlLocationId = $user->id_location;
             
@@ -472,6 +500,189 @@ class CentrisController extends Controller
                     'success' => false,
                     'message' => 'Configuration GHL manquante pour cet utilisateur'
                 ], 500);
+            }
+
+            // Clé cache pour les métadonnées (total count, total pages)
+            $metaCacheKey = 'ghl_contacts_meta_' . $user->id;
+            $pageCacheKey = 'ghl_contacts_page_' . $user->id . '_' . $page;
+            
+            // Vérifier si cette page est en cache
+            $cachedPageData = \Cache::get($pageCacheKey);
+            if ($cachedPageData) {
+                Log::info('Returning cached contacts page', ['page' => $page, 'user_id' => $user->id]);
+                return response()->json([
+                    'success' => true,
+                    'contacts' => $cachedPageData['contacts'],
+                    'total' => $cachedPageData['total'],
+                    'page' => $page,
+                    'pageSize' => $pageSize,
+                    'totalPages' => $cachedPageData['totalPages'],
+                    'cached' => true
+                ]);
+            }
+
+            // === Récupérer les contacts avec pagination ===
+            $contactsMap = [];
+            $limit = $pageSize;
+            $nextPageUrl = null;
+            $hasMore = true;
+            $currentPageNum = 1;
+            $totalContactsCount = 0;
+
+            // Parcourir les pages jusqu'à atteindre la page demandée
+            while ($hasMore && $currentPageNum <= $page) {
+                if ($nextPageUrl) {
+                    $url = $nextPageUrl;
+                } else {
+                    $url = "https://services.leadconnectorhq.com/contacts/?locationId={$ghlLocationId}&limit={$limit}";
+                }
+                
+                Log::info('Fetching contacts from GHL API', ['url' => $url, 'api_page' => $currentPageNum]);
+                
+                $response = Http::timeout(60)->withHeaders([
+                    'Authorization' => 'Bearer ' . $ghlToken,
+                    'Version' => '2021-07-28',
+                    'Accept' => 'application/json',
+                ])->get($url);
+                
+                if (!$response->successful()) {
+                    Log::error('GHL Contacts API Error', [
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                        'url' => $url
+                    ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Erreur lors du chargement des contacts'
+                    ], 500);
+                }
+                
+                $data = $response->json();
+                $contactsInThisPage = count($data['contacts'] ?? []);
+                Log::info('GHL Contacts API Response', ['contacts_in_page' => $contactsInThisPage, 'page' => $currentPageNum]);
+                
+                // Traiter les contacts seulement si on est à la bonne page
+                if ($currentPageNum == $page && isset($data['contacts']) && is_array($data['contacts'])) {
+                    foreach ($data['contacts'] as $contact) {
+                        $contactId = $contact['id'] ?? null;
+                        if ($contactId && !isset($contactsMap[$contactId])) {
+                            $firstName = $contact['firstName'] ?? '';
+                            $lastName = $contact['lastName'] ?? '';
+                            $fullName = trim($firstName . ' ' . $lastName);
+                            
+                            $contactsMap[$contactId] = [
+                                'id' => $contactId,
+                                'firstName' => $firstName,
+                                'lastName' => $lastName,
+                                'name' => !empty($fullName) ? $fullName : 'Sans nom',
+                                'email' => $contact['email'] ?? 'Non renseigné',
+                                'phone' => $contact['phone'] ?? 'Non renseigné',
+                                'companyName' => $contact['companyName'] ?? ''
+                            ];
+                        }
+                    }
+                }
+                
+                // Compter le total de contacts pour calculer le nombre de pages
+                if ($currentPageNum == 1) {
+                    $totalContactsCount = $contactsInThisPage;
+                }
+                
+                if (isset($data['meta']['nextPageUrl']) && !empty($data['meta']['nextPageUrl'])) {
+                    $nextPageUrl = $data['meta']['nextPageUrl'];
+                    $hasMore = true;
+                    $currentPageNum++;
+                } else {
+                    $hasMore = false;
+                }
+            }
+
+            $contacts = array_values($contactsMap);
+            $totalPages = ceil($totalContactsCount / $pageSize);
+            
+            // Mettre en cache cette page pour 30 minutes
+            \Cache::put($pageCacheKey, [
+                'contacts' => $contacts,
+                'total' => $totalContactsCount,
+                'totalPages' => $totalPages
+            ], now()->addMinutes(30));
+            
+            Log::info('GHL Contacts page fetched successfully', ['page' => $page, 'total_contacts_in_page' => count($contacts), 'total_pages' => $totalPages]);
+            
+            return response()->json([
+                'success' => true,
+                'contacts' => $contacts,
+                'total' => $totalContactsCount,
+                'page' => $page,
+                'pageSize' => $pageSize,
+                'totalPages' => $totalPages,
+                'cached' => false
+            ]);
+        } catch (\Exception $e) {
+            Log::error('GHL Contacts API Exception', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur serveur: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getGHLOpportunities()
+    {
+        try {
+            // Vérifier si un locationId est fourni dans l'URL
+            $locationId = request()->query('locationId');
+            $page = request()->query('page', 1);
+            $pageSize = 50;
+            
+            if ($locationId) {
+                // Rechercher l'utilisateur avec cet id_location dans la BD
+                $user = User::where('id_location', $locationId)->first();
+                
+                // Si l'utilisateur n'existe pas
+                if (!$user) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Emplacement non trouvé'
+                    ], 404);
+                }
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Aucun identifiant d\'emplacement fourni'
+                ], 400);
+            }
+            
+            $ghlToken = $user->ghl_access_token;
+            $ghlLocationId = $user->id_location;
+            
+            // Vérifier que les credentials existent
+            if (!$ghlToken || !$ghlLocationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Configuration GHL manquante pour cet utilisateur'
+                ], 500);
+            }
+
+            // Clé cache pour les opportunités
+            $pageCacheKey = 'ghl_opportunities_page_' . $user->id . '_' . $page;
+            
+            // Vérifier si cette page est en cache
+            $cachedPageData = \Cache::get($pageCacheKey);
+            if ($cachedPageData) {
+                Log::info('Returning cached opportunities page', ['page' => $page, 'user_id' => $user->id]);
+                return response()->json([
+                    'success' => true,
+                    'opportunities' => $cachedPageData['opportunities'],
+                    'total' => $cachedPageData['total'],
+                    'page' => $page,
+                    'pageSize' => $pageSize,
+                    'totalPages' => $cachedPageData['totalPages'],
+                    'cached' => true
+                ]);
             }
 
             // Récupérer les pipelines pour mapper les IDs aux noms
@@ -492,7 +703,6 @@ class CentrisController extends Controller
                         $pipelineName = $pipeline['name'] ?? 'Pipeline sans nom';
                         $pipelinesMap[$pipelineId] = $pipelineName;
                         
-                        // Mapper les stages de ce pipeline
                         if (isset($pipeline['stages']) && is_array($pipeline['stages'])) {
                             foreach ($pipeline['stages'] as $stage) {
                                 $stageId = $stage['id'] ?? '';
@@ -504,42 +714,50 @@ class CentrisController extends Controller
                 }
             }
 
-            $contactsMap = [];
+            // === Récupérer les opportunités avec pagination ===
             $opportunitiesList = [];
-            $limit = 100;
             $nextPageUrl = null;
             $hasMore = true;
-            $pageCount = 0;
+            $currentPageNum = 1;
+            $totalOpportunitiesCount = 0;
 
-            while ($hasMore) {
+            // Parcourir les pages jusqu'à atteindre la page demandée
+            while ($hasMore && $currentPageNum <= $page) {
                 if ($nextPageUrl) {
                     $url = $nextPageUrl;
                 } else {
-                    $url = "https://services.leadconnectorhq.com/opportunities/search?location_id={$ghlLocationId}&limit={$limit}";
+                    $url = "https://services.leadconnectorhq.com/opportunities/search?locationId={$ghlLocationId}&limit={$pageSize}";
                 }
-                $response = Http::timeout(30)->withHeaders([
+                
+                Log::info('Fetching opportunities from GHL API', ['url' => $url, 'api_page' => $currentPageNum]);
+                
+                $response = Http::timeout(60)->withHeaders([
                     'Authorization' => 'Bearer ' . $ghlToken,
                     'Version' => '2021-07-28',
                     'Accept' => 'application/json',
                 ])->get($url);
+                
                 if (!$response->successful()) {
-                    \Log::error('GHL API Error', [
+                    Log::error('GHL Opportunities API Error', [
                         'status' => $response->status(),
                         'body' => $response->body(),
                         'url' => $url
                     ]);
                     return response()->json([
                         'success' => false,
-                        'message' => 'Erreur lors du chargement des contacts'
+                        'message' => 'Erreur lors du chargement des opportunités'
                     ], 500);
                 }
+                
                 $data = $response->json();
-                if (isset($data['opportunities']) && is_array($data['opportunities'])) {
+                $oppsInThisPage = count($data['opportunities'] ?? []);
+                Log::info('GHL Opportunities API Response', ['opps_in_page' => $oppsInThisPage, 'page' => $currentPageNum]);
+                
+                // Traiter les opportunités seulement si on est à la bonne page
+                if ($currentPageNum == $page && isset($data['opportunities']) && is_array($data['opportunities'])) {
                     foreach ($data['opportunities'] as $opp) {
                         $pipelineId = $opp['pipelineId'] ?? '';
                         $pipelineStageId = $opp['pipelineStageId'] ?? '';
-                        
-                        // Utiliser les noms au lieu des IDs
                         $pipelineName = $pipelinesMap[$pipelineId] ?? $pipelineId;
                         $stageName = $stagesMap[$pipelineStageId] ?? $pipelineStageId;
                         
@@ -553,53 +771,51 @@ class CentrisController extends Controller
                             'source' => $opp['source'] ?? '',
                             'contactId' => $opp['contactId'] ?? ''
                         ];
-                        if (isset($opp['contact']) && isset($opp['contact']['id'])) {
-                            $contact = $opp['contact'];
-                            $contactId = $contact['id'];
-                            if (!isset($contactsMap[$contactId])) {
-                                $contactsMap[$contactId] = [
-                                    'id' => $contactId,
-                                    'name' => $contact['name'] ?? 'Sans nom',
-                                    'email' => $contact['email'] ?? 'Non renseigné',
-                                    'phone' => $contact['phone'] ?? 'Non renseigné',
-                                    'companyName' => $contact['companyName'] ?? ''
-                                ];
-                            }
-                        }
                     }
                 }
+                
+                // Compter le total d'opportunités pour calculer le nombre de pages
+                if ($currentPageNum == 1) {
+                    $totalOpportunitiesCount = $oppsInThisPage;
+                }
+                
                 if (isset($data['meta']['nextPageUrl']) && !empty($data['meta']['nextPageUrl'])) {
                     $nextPageUrl = $data['meta']['nextPageUrl'];
                     $hasMore = true;
+                    $currentPageNum++;
                 } else {
                     $hasMore = false;
                 }
-                $pageCount++;
-                if ($pageCount >= 100) {
-                    \Log::warning('GHL Pagination: Limite de sécurité atteinte (100 pages)');
-                    break;
-                }
             }
-            $contacts = array_values($contactsMap);
-            \Cache::put($cacheKey, [
-                'contacts' => $contacts,
-                'opportunities' => $opportunitiesList
-            ], now()->addMinutes(5));
+
+            $totalPages = ceil($totalOpportunitiesCount / $pageSize);
+            
+            // Mettre en cache cette page pour 30 minutes
+            \Cache::put($pageCacheKey, [
+                'opportunities' => $opportunitiesList,
+                'total' => $totalOpportunitiesCount,
+                'totalPages' => $totalPages
+            ], now()->addMinutes(30));
+            
+            Log::info('GHL Opportunities page fetched successfully', ['page' => $page, 'total_opps_in_page' => count($opportunitiesList), 'total_pages' => $totalPages]);
+            
             return response()->json([
                 'success' => true,
-                'contacts' => $contacts,
                 'opportunities' => $opportunitiesList,
-                'total' => count($contacts),
+                'total' => $totalOpportunitiesCount,
+                'page' => $page,
+                'pageSize' => $pageSize,
+                'totalPages' => $totalPages,
                 'cached' => false
             ]);
         } catch (\Exception $e) {
-            \Log::error('GHL API Exception', [
+            Log::error('GHL Opportunities API Exception', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur serveur'
+                'message' => 'Erreur serveur: ' . $e->getMessage()
             ], 500);
         }
     }
