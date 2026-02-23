@@ -637,7 +637,7 @@
                   <input type="text" 
                       class="search-input" 
                       id="searchInput" 
-                      placeholder="Rechercher par adresse, ville..."
+                      placeholder="Rechercher par adresse,lms..."
                       value="{{ $search ?? '' }}"
                       oninput="scheduleSearch()">
                 <button class="clear-search" id="clearSearch" onclick="clearSearch()">×</button>
