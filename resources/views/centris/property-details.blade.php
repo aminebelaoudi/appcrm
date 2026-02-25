@@ -827,6 +827,33 @@
             font-weight: 600;
         }
 
+        .modal-header-title-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-refresh-header {
+            padding: 6px 12px;
+            background: #e31c23;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .btn-refresh-header:hover {
+            background: #c71a1f;
+        }
+
         .close-modal {
             background: transparent;
             border: none;
@@ -897,6 +924,48 @@
         .contact-details {
             font-size: 13px;
             color: #666;
+        }
+
+        .validation-message {
+            font-size: 12px;
+            color: #e31c23;
+            margin-top: -8px;
+            margin-bottom: 10px;
+            display: none;
+        }
+
+        .modal-pagination {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .pagination-btn {
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            background: #fff;
+            color: #333;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .pagination-btn:hover {
+            border-color: #e31c23;
+            color: #e31c23;
+        }
+
+        .pagination-btn.active {
+            background: #e31c23;
+            border-color: #e31c23;
+            color: #fff;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .role-selector {
@@ -1285,10 +1354,16 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Ajouter une personne impliquée</h3>
-                <button class="close-modal" onclick="closeAddPersonModal()">&times;</button>
+                <div class="modal-header-actions">
+                    <button type="button" class="btn-refresh-header" onclick="refreshContactsList()">Rafraîchir la liste</button>
+                    <button class="close-modal" onclick="closeAddPersonModal()">&times;</button>
+                </div>
             </div>
             <div class="modal-body">
-                <input type="text" class="modal-search" id="searchPersonsModal" placeholder="Rechercher un contact...">
+                <input type="text" class="modal-search" id="searchPersonsModal" placeholder="Rechercher un contact (au moins 3 lettres)...">
+                <div id="contactsSearchValidation" class="validation-message">Veuillez entrer au moins 3 lettres pour rechercher.</div>
+                <div id="contactsPagination" class="modal-pagination"></div>
+                <div id="contactsFoundSummary" class="contact-details">Aucun contact trouvé</div>
                 <div id="contactListContainer">
                     <div class="loading">Chargement des contacts</div>
                 </div>
@@ -1305,10 +1380,14 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Ajouter une opportunité liée</h3>
-                <button class="close-modal" onclick="closeAddOpportunityModal()">&times;</button>
+                <div class="modal-header-actions">
+                    <button type="button" class="btn-refresh-header" onclick="refreshOpportunitiesList()">Rafraîchir la liste</button>
+                    <button class="close-modal" onclick="closeAddOpportunityModal()">&times;</button>
+                </div>
             </div>
             <div class="modal-body">
                 <input type="text" class="modal-search" id="searchOpportunitiesModal" placeholder="Rechercher une opportunité...">
+                <div id="opportunitiesFoundCount" class="contact-details">0 opportunité trouvée</div>
                 <div id="opportunityListContainer">
                     <div class="loading">Chargement des opportunités</div>
                 </div>
@@ -1349,9 +1428,17 @@
         
         let selectedContact = null;
         let allContacts = [];
-        let contactsCache = null; // Cache pour les contacts GHL
+        let contactsCache = {}; // Cache des contacts GHL par page
         let contactsLastLoaded = 0; // Timestamp du dernier chargement
-        const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes en millisecondes
+        const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes en millisecondes
+        let contactsCurrentPage = 1;
+        let contactsTotalPages = 1;
+        let contactsHasNextPage = false;
+        let contactsTotalFound = 0;
+        let contactsSearchTerm = '';
+        let contactsSearchTimeout = null;
+        let contactsRequestController = null;
+        const CONTACT_SEARCH_MIN_LENGTH = 3;
         let currentPersons = @json($persons ?? []);
         let selectedOpportunity = null;
         let allOpportunities = [];
@@ -1718,9 +1805,19 @@
         async function openAddPersonModal() {
             const modal = document.getElementById('addPersonModal');
             modal.classList.add('show');
+            contactsCurrentPage = 1;
+            contactsSearchTerm = '';
+            const validation = document.getElementById('contactsSearchValidation');
+            if (validation) {
+                validation.style.display = 'none';
+            }
+            const searchInput = document.getElementById('searchPersonsModal');
+            if (searchInput) {
+                searchInput.value = '';
+            }
             
             // Charger les contacts depuis l'API GHL (avec cache)
-            await loadGHLContacts();
+            await loadGHLContacts(false, contactsCurrentPage);
         }
 
         function closeAddPersonModal() {
@@ -1732,21 +1829,58 @@
             confirmButton.textContent = 'Ajouter';
             // Réinitialiser la recherche
             document.getElementById('searchPersonsModal').value = '';
+            contactsSearchTerm = '';
+            const validation = document.getElementById('contactsSearchValidation');
+            if (validation) {
+                validation.style.display = 'none';
+            }
+            if (contactsSearchTimeout) {
+                clearTimeout(contactsSearchTimeout);
+                contactsSearchTimeout = null;
+            }
+            if (contactsRequestController) {
+                contactsRequestController.abort();
+                contactsRequestController = null;
+            }
         }
 
-        async function loadGHLContacts() {
+        async function refreshContactsList() {
+            contactsCache = {};
+            contactsLastLoaded = 0;
+            contactsCurrentPage = 1;
+            contactsTotalFound = 0;
+            contactsSearchTerm = (document.getElementById('searchPersonsModal')?.value || '').trim();
+            selectedContact = null;
+            const confirmButton = document.getElementById('confirmAddPerson');
+            if (confirmButton) {
+                confirmButton.disabled = true;
+            }
+            await loadGHLContacts(true, contactsCurrentPage);
+        }
+
+        async function loadGHLContacts(forceRefresh = false, page = 1) {
             const container = document.getElementById('contactListContainer');
+            const safePage = Math.max(1, Number(page) || 1);
+            contactsCurrentPage = safePage;
+            const normalizedSearch = (contactsSearchTerm || '').trim().toLowerCase();
+            const effectiveSearch = normalizedSearch.length >= CONTACT_SEARCH_MIN_LENGTH ? normalizedSearch : '';
+            const cacheKey = `${safePage}::${effectiveSearch}`;
             
             // Vérifier si on a un cache valide
             const now = Date.now();
-            if (contactsCache && (now - contactsLastLoaded) < CACHE_DURATION) {
+            if (!forceRefresh && contactsCache[cacheKey] && (now - contactsLastLoaded) < CACHE_DURATION) {
                 console.log('Utilisation du cache des contacts');
+                const cachedData = contactsCache[cacheKey];
+                contactsTotalPages = cachedData.totalPages || contactsTotalPages;
+                contactsHasNextPage = !!cachedData.hasNextPage;
+                contactsTotalFound = Number(cachedData.total || 0);
                 // Filtrer les contacts qui ne sont pas déjà dans currentPersons
-                const availableContacts = contactsCache.filter(contact => {
+                const availableContacts = (cachedData.contacts || []).filter(contact => {
                     return !currentPersons.some(p => p.contact_id === contact.id);
                 });
                 allContacts = availableContacts;
                 displayContacts(allContacts);
+                renderContactsPagination();
                 return;
             }
 
@@ -1754,11 +1888,26 @@
 
             try {
                 // Appeler notre API Laravel au lieu de l'API GHL directement
-                const response = await fetch('{{ route("api.ghl.contacts") }}?locationId={{ $locationId }}', {
+                let url = `{{ route("api.ghl.contacts") }}?locationId={{ $locationId }}&page=${safePage}`;
+                if (effectiveSearch !== '') {
+                    url += `&search=${encodeURIComponent(effectiveSearch)}`;
+                }
+                if (forceRefresh) {
+                    url += '&force_refresh=1';
+                }
+
+                if (contactsRequestController) {
+                    contactsRequestController.abort();
+                }
+                const requestController = new AbortController();
+                contactsRequestController = requestController;
+
+                const response = await fetch(url, {
                     method: 'GET',
                     headers: {
                         'Accept': 'application/json'
-                    }
+                    },
+                    signal: requestController.signal
                 });
 
                 if (!response.ok) {
@@ -1771,16 +1920,26 @@
                     throw new Error(data.message || 'Erreur inconnue');
                 }
 
-                // Mettre en cache
-                contactsCache = data.contacts;
+                contactsTotalPages = Math.max(1, Number(data.totalPages) || 1);
+                contactsHasNextPage = !!data.hasNextPage;
+                contactsTotalFound = Number(data.total || 0);
+
+                // Mettre en cache la page
+                contactsCache[cacheKey] = {
+                    contacts: data.contacts || [],
+                    totalPages: contactsTotalPages,
+                    hasNextPage: contactsHasNextPage,
+                    total: contactsTotalFound
+                };
                 contactsLastLoaded = Date.now();
 
                 // Filtrer les contacts qui ne sont pas déjà dans currentPersons
-                const availableContacts = data.contacts.filter(contact => {
+                const availableContacts = (data.contacts || []).filter(contact => {
                     return !currentPersons.some(p => p.contact_id === contact.id);
                 });
 
                 allContacts = availableContacts;
+                renderContactsPagination();
 
                 if (allContacts.length === 0) {
                     container.innerHTML = '<div class="empty-state"><p>Aucun nouveau contact disponible</p></div>';
@@ -1791,15 +1950,75 @@
                 displayContacts(allContacts);
 
             } catch (error) {
+                if (error.name === 'AbortError') {
+                    return;
+                }
                 console.error('Erreur:', error);
                 container.innerHTML = '<div class="empty-state"><p style="color: #e31c23;">Erreur lors du chargement des contacts</p></div>';
+            } finally {
+                if (contactsRequestController === requestController) {
+                    contactsRequestController = null;
+                }
             }
+        }
+
+        function renderContactsPagination() {
+            const pagination = document.getElementById('contactsPagination');
+            if (!pagination) {
+                return;
+            }
+
+            const totalPagesToShow = Math.max(1, contactsTotalPages);
+            const startPage = Math.max(1, contactsCurrentPage - 2);
+            const endPage = Math.min(totalPagesToShow, contactsCurrentPage + 2);
+
+            let html = '';
+            html += `<button type="button" class="pagination-btn" onclick="goToContactsPage(${contactsCurrentPage - 1})" ${contactsCurrentPage <= 1 ? 'disabled' : ''}>Précédent</button>`;
+
+            for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+                html += `<button type="button" class="pagination-btn ${pageNum === contactsCurrentPage ? 'active' : ''}" onclick="goToContactsPage(${pageNum})">${pageNum}</button>`;
+            }
+
+            const canGoNext = contactsCurrentPage < totalPagesToShow || contactsHasNextPage;
+            html += `<button type="button" class="pagination-btn" onclick="goToContactsPage(${contactsCurrentPage + 1})" ${canGoNext ? '' : 'disabled'}>Suivant</button>`;
+
+            pagination.innerHTML = html;
+        }
+
+        async function goToContactsPage(page) {
+            const requestedPage = Math.max(1, Number(page) || 1);
+            if (requestedPage === contactsCurrentPage) {
+                return;
+            }
+
+            if (requestedPage > contactsTotalPages && !contactsHasNextPage) {
+                return;
+            }
+
+            selectedContact = null;
+            const confirmButton = document.getElementById('confirmAddPerson');
+            if (confirmButton) {
+                confirmButton.disabled = true;
+            }
+
+            await loadGHLContacts(false, requestedPage);
         }
 
         function displayContacts(contacts) {
             const container = document.getElementById('contactListContainer');
+            const summaryElement = document.getElementById('contactsFoundSummary');
+            const pageCount = contacts.length;
+            const totalCount = contactsTotalFound > 0 ? contactsTotalFound : pageCount;
+
+            if (summaryElement) {
+                if (totalCount === 0) {
+                    summaryElement.textContent = 'Aucun contact trouvé';
+                } else {
+                    summaryElement.textContent = `Total: ${totalCount} contact${totalCount > 1 ? 's' : ''} trouvé${totalCount > 1 ? 's' : ''}`;
+                }
+            }
             
-            if (contacts.length === 0) {
+            if (pageCount === 0) {
                 container.innerHTML = '<div class="empty-state"><p>Aucun contact trouvé</p></div>';
                 return;
             }
@@ -1816,15 +2035,29 @@
         // Recherche dans la modale des personnes
         document.addEventListener('DOMContentLoaded', function() {
             const searchPersonsModal = document.getElementById('searchPersonsModal');
+            const searchValidation = document.getElementById('contactsSearchValidation');
             if (searchPersonsModal) {
                 searchPersonsModal.addEventListener('input', function(e) {
-                    const searchTerm = e.target.value.toLowerCase();
-                    const filteredContacts = allContacts.filter(contact => 
-                        contact.name.toLowerCase().includes(searchTerm) ||
-                        (contact.email && contact.email.toLowerCase().includes(searchTerm)) ||
-                        (contact.phone && contact.phone.toLowerCase().includes(searchTerm))
-                    );
-                    displayContacts(filteredContacts);
+                    const rawSearch = (e.target.value || '').trim();
+                    const isBelowMin = rawSearch.length > 0 && rawSearch.length < CONTACT_SEARCH_MIN_LENGTH;
+                    contactsSearchTerm = rawSearch.length >= CONTACT_SEARCH_MIN_LENGTH ? rawSearch : '';
+                    contactsCurrentPage = 1;
+
+                    if (searchValidation) {
+                        searchValidation.style.display = isBelowMin ? 'block' : 'none';
+                    }
+
+                    if (contactsSearchTimeout) {
+                        clearTimeout(contactsSearchTimeout);
+                    }
+
+                    if (isBelowMin) {
+                        return;
+                    }
+
+                    contactsSearchTimeout = setTimeout(() => {
+                        loadGHLContacts(false, 1);
+                    }, 600);
                 });
             }
         });
@@ -2156,16 +2389,27 @@
             document.getElementById('searchOpportunitiesModal').value = '';
         }
 
-        async function loadGHLOpportunities() {
+        async function refreshOpportunitiesList() {
+            opportunitiesCache = null;
+            opportunitiesLastLoaded = 0;
+            selectedOpportunity = null;
+            const confirmButton = document.getElementById('confirmAddOpportunity');
+            if (confirmButton) {
+                confirmButton.disabled = true;
+            }
+            await loadGHLOpportunities(true);
+        }
+
+        async function loadGHLOpportunities(forceRefresh = false) {
             const container = document.getElementById('opportunityListContainer');
             
             // Vérifier si on a un cache valide
             const now = Date.now();
-            if (opportunitiesCache && (now - opportunitiesLastLoaded) < CACHE_DURATION) {
+            if (!forceRefresh && opportunitiesCache && (now - opportunitiesLastLoaded) < CACHE_DURATION) {
                 console.log('Utilisation du cache des opportunités');
                 // Filtrer les opportunités qui ne sont pas déjà ajoutées
                 const availableOpportunities = opportunitiesCache.filter(opp => {
-                    return !currentOpportunities.some(co => co.opportunity_id === opp.id);
+                    return !currentOpportunities.some(co => (co.opportunity_id || co.opportunityId) === opp.id);
                 });
                 allOpportunities = availableOpportunities;
                 displayOpportunities(allOpportunities);
@@ -2176,7 +2420,8 @@
 
             try {
                 // Appeler notre API Laravel
-                const response = await fetch('{{ route("api.ghl.contacts") }}?locationId={{ $locationId }}', {
+                const url = `{{ route("api.ghl.opportunities") }}?locationId={{ $locationId }}${forceRefresh ? '&force_refresh=1' : ''}`;
+                const response = await fetch(url, {
                     method: 'GET',
                     headers: {
                         'Accept': 'application/json'
@@ -2184,7 +2429,8 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error('Erreur lors du chargement des opportunités');
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.message || 'Erreur lors du chargement des opportunités');
                 }
 
                 const data = await response.json();
@@ -2202,7 +2448,7 @@
 
                 // Filtrer les opportunités qui ne sont pas déjà ajoutées
                 const availableOpportunities = opportunitiesData.filter(opp => {
-                    return !currentOpportunities.some(co => co.opportunity_id === opp.id);
+                    return !currentOpportunities.some(co => (co.opportunity_id || co.opportunityId) === opp.id);
                 });
 
                 allOpportunities = availableOpportunities;
@@ -2223,6 +2469,12 @@
 
         function displayOpportunities(opportunities) {
             const container = document.getElementById('opportunityListContainer');
+            const countElement = document.getElementById('opportunitiesFoundCount');
+            const count = opportunities.length;
+
+            if (countElement) {
+                countElement.textContent = `${count} opportunité${count > 1 ? 's' : ''} trouvée${count > 1 ? 's' : ''}`;
+            }
             
             if (opportunities.length === 0) {
                 container.innerHTML = '<div class="empty-state"><p>Aucune opportunité trouvée</p></div>';

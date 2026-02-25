@@ -40,6 +40,10 @@ Route::get('/api/ghl/contacts', [CentrisController::class, 'getGHLContacts'])
     ->name('api.ghl.contacts')
     ->middleware(['api.rate.limit']);
 
+Route::get('/api/ghl/opportunities', [CentrisController::class, 'getGHLOpportunities'])
+    ->name('api.ghl.opportunities')
+    ->middleware(['api.rate.limit']);
+
 // API Routes pour les relations Propriété-Personnes-Opportunités
 Route::prefix('api/properties')->middleware(['api.rate.limit'])->group(function () {
     // Personnes impliquées

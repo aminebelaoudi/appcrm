@@ -470,7 +470,11 @@ class CentrisController extends Controller
         try {
             // Vérifier si un locationId est fourni dans l'URL
             $locationId = request()->query('locationId');
+            $forceRefresh = request()->boolean('force_refresh', false);
             $page = request()->query('page', 1);
+            $search = trim((string) request()->query('search', ''));
+            $searchLower = function_exists('mb_strtolower') ? mb_strtolower($search) : strtolower($search);
+            $hasSearch = $search !== '';
             $pageSize = 100; // Charger 100 contacts par page
             
             if ($locationId) {
@@ -502,12 +506,11 @@ class CentrisController extends Controller
                 ], 500);
             }
 
-            // Clé cache pour les métadonnées (total count, total pages)
-            $metaCacheKey = 'ghl_contacts_meta_' . $user->id;
-            $pageCacheKey = 'ghl_contacts_page_' . $user->id . '_' . $page;
+            // Clé cache pour cette page
+            $pageCacheKey = 'ghl_contacts_page_v4_' . $user->id . '_' . $page . '_' . md5($searchLower);
             
             // Vérifier si cette page est en cache
-            $cachedPageData = \Cache::get($pageCacheKey);
+            $cachedPageData = !$forceRefresh ? \Cache::get($pageCacheKey) : null;
             if ($cachedPageData) {
                 Log::info('Returning cached contacts page', ['page' => $page, 'user_id' => $user->id]);
                 return response()->json([
@@ -517,6 +520,8 @@ class CentrisController extends Controller
                     'page' => $page,
                     'pageSize' => $pageSize,
                     'totalPages' => $cachedPageData['totalPages'],
+                    'hasNextPage' => $cachedPageData['hasNextPage'] ?? false,
+                    'search' => $search,
                     'cached' => true
                 ]);
             }
@@ -528,6 +533,8 @@ class CentrisController extends Controller
             $hasMore = true;
             $currentPageNum = 1;
             $totalContactsCount = 0;
+            $knownTotalPages = null;
+            $hasNextPage = false;
 
             // Parcourir les pages jusqu'à atteindre la page demandée
             while ($hasMore && $currentPageNum <= $page) {
@@ -535,6 +542,9 @@ class CentrisController extends Controller
                     $url = $nextPageUrl;
                 } else {
                     $url = "https://services.leadconnectorhq.com/contacts/?locationId={$ghlLocationId}&limit={$limit}";
+                    if ($hasSearch) {
+                        $url .= '&query=' . urlencode($search);
+                    }
                 }
                 
                 Log::info('Fetching contacts from GHL API', ['url' => $url, 'api_page' => $currentPageNum]);
@@ -560,52 +570,71 @@ class CentrisController extends Controller
                 $data = $response->json();
                 $contactsInThisPage = count($data['contacts'] ?? []);
                 Log::info('GHL Contacts API Response', ['contacts_in_page' => $contactsInThisPage, 'page' => $currentPageNum]);
+
+                $apiTotal = $data['meta']['total'] ?? null;
+                if (is_numeric($apiTotal)) {
+                    $totalContactsCount = (int) $apiTotal;
+                    $knownTotalPages = max(1, (int) ceil($totalContactsCount / $pageSize));
+                }
                 
-                // Traiter les contacts seulement si on est à la bonne page
-                if ($currentPageNum == $page && isset($data['contacts']) && is_array($data['contacts'])) {
+                // Traiter les contacts
+                if (isset($data['contacts']) && is_array($data['contacts'])) {
                     foreach ($data['contacts'] as $contact) {
                         $contactId = $contact['id'] ?? null;
-                        if ($contactId && !isset($contactsMap[$contactId])) {
-                            $firstName = $contact['firstName'] ?? '';
-                            $lastName = $contact['lastName'] ?? '';
-                            $fullName = trim($firstName . ' ' . $lastName);
-                            
-                            $contactsMap[$contactId] = [
-                                'id' => $contactId,
-                                'firstName' => $firstName,
-                                'lastName' => $lastName,
-                                'name' => !empty($fullName) ? $fullName : 'Sans nom',
-                                'email' => $contact['email'] ?? 'Non renseigné',
-                                'phone' => $contact['phone'] ?? 'Non renseigné',
-                                'companyName' => $contact['companyName'] ?? ''
-                            ];
+                        if (!$contactId || isset($contactsMap[$contactId])) {
+                            continue;
+                        }
+
+                        $firstName = $contact['firstName'] ?? '';
+                        $lastName = $contact['lastName'] ?? '';
+                        $fullName = trim($firstName . ' ' . $lastName);
+
+                        $normalized = [
+                            'id' => $contactId,
+                            'firstName' => $firstName,
+                            'lastName' => $lastName,
+                            'name' => !empty($fullName) ? $fullName : 'Sans nom',
+                            'email' => $contact['email'] ?? 'Non renseigné',
+                            'phone' => $contact['phone'] ?? 'Non renseigné',
+                            'companyName' => $contact['companyName'] ?? ''
+                        ];
+
+                        if ($currentPageNum == $page) {
+                            $contactsMap[$contactId] = $normalized;
                         }
                     }
                 }
                 
-                // Compter le total de contacts pour calculer le nombre de pages
-                if ($currentPageNum == 1) {
+                // Compter minimalement si le total n'est pas fourni
+                if ($currentPageNum == 1 && $knownTotalPages === null) {
                     $totalContactsCount = $contactsInThisPage;
                 }
                 
                 if (isset($data['meta']['nextPageUrl']) && !empty($data['meta']['nextPageUrl'])) {
                     $nextPageUrl = $data['meta']['nextPageUrl'];
                     $hasMore = true;
+                    if ($currentPageNum == $page) {
+                        $hasNextPage = true;
+                    }
                     $currentPageNum++;
                 } else {
                     $hasMore = false;
+                    if ($currentPageNum == $page) {
+                        $hasNextPage = false;
+                    }
                 }
             }
 
             $contacts = array_values($contactsMap);
-            $totalPages = ceil($totalContactsCount / $pageSize);
+            $totalPages = $knownTotalPages ?? ($hasNextPage ? max(1, $page + 1) : max(1, $page));
             
-            // Mettre en cache cette page pour 30 minutes
+            // Mettre en cache cette page pour 60 minutes
             \Cache::put($pageCacheKey, [
                 'contacts' => $contacts,
                 'total' => $totalContactsCount,
-                'totalPages' => $totalPages
-            ], now()->addMinutes(30));
+                'totalPages' => $totalPages,
+                'hasNextPage' => $hasNextPage
+            ], now()->addMinutes(60));
             
             Log::info('GHL Contacts page fetched successfully', ['page' => $page, 'total_contacts_in_page' => count($contacts), 'total_pages' => $totalPages]);
             
@@ -616,6 +645,8 @@ class CentrisController extends Controller
                 'page' => $page,
                 'pageSize' => $pageSize,
                 'totalPages' => $totalPages,
+                'hasNextPage' => $hasNextPage,
+                'search' => $search,
                 'cached' => false
             ]);
         } catch (\Exception $e) {
@@ -635,8 +666,8 @@ class CentrisController extends Controller
         try {
             // Vérifier si un locationId est fourni dans l'URL
             $locationId = request()->query('locationId');
-            $page = request()->query('page', 1);
-            $pageSize = 50;
+            $forceRefresh = request()->boolean('force_refresh', false);
+            $pageSize = 100;
             
             if ($locationId) {
                 // Rechercher l'utilisateur avec cet id_location dans la BD
@@ -667,20 +698,20 @@ class CentrisController extends Controller
                 ], 500);
             }
 
-            // Clé cache pour les opportunités
-            $pageCacheKey = 'ghl_opportunities_page_' . $user->id . '_' . $page;
+            // Clé cache pour toutes les opportunités
+            $cacheKey = 'ghl_opportunities_all_' . $user->id;
             
-            // Vérifier si cette page est en cache
-            $cachedPageData = \Cache::get($pageCacheKey);
+            // Vérifier si le cache est disponible
+            $cachedPageData = !$forceRefresh ? \Cache::get($cacheKey) : null;
             if ($cachedPageData) {
-                Log::info('Returning cached opportunities page', ['page' => $page, 'user_id' => $user->id]);
+                Log::info('Returning cached opportunities list', ['user_id' => $user->id]);
                 return response()->json([
                     'success' => true,
                     'opportunities' => $cachedPageData['opportunities'],
                     'total' => $cachedPageData['total'],
-                    'page' => $page,
+                    'page' => 1,
                     'pageSize' => $pageSize,
-                    'totalPages' => $cachedPageData['totalPages'],
+                    'totalPages' => 1,
                     'cached' => true
                 ]);
             }
@@ -688,6 +719,7 @@ class CentrisController extends Controller
             // Récupérer les pipelines pour mapper les IDs aux noms
             $pipelinesMap = [];
             $stagesMap = [];
+            $pipelineIds = [];
             
             $pipelinesResponse = Http::timeout(30)->withHeaders([
                 'Authorization' => 'Bearer ' . $ghlToken,
@@ -701,111 +733,116 @@ class CentrisController extends Controller
                     foreach ($pipelinesData['pipelines'] as $pipeline) {
                         $pipelineId = $pipeline['id'] ?? '';
                         $pipelineName = $pipeline['name'] ?? 'Pipeline sans nom';
-                        $pipelinesMap[$pipelineId] = $pipelineName;
+                        if (!empty($pipelineId)) {
+                            $pipelinesMap[$pipelineId] = $pipelineName;
+                            $pipelineIds[] = $pipelineId;
+                        }
                         
                         if (isset($pipeline['stages']) && is_array($pipeline['stages'])) {
                             foreach ($pipeline['stages'] as $stage) {
                                 $stageId = $stage['id'] ?? '';
-                                $stageName = $stage['name'] ?? 'Stage sans nom';
-                                $stagesMap[$stageId] = $stageName;
+                                if (!empty($stageId)) {
+                                    $stageName = $stage['name'] ?? 'Stage sans nom';
+                                    $stagesMap[$stageId] = $stageName;
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // === Récupérer les opportunités avec pagination ===
-            $opportunitiesList = [];
-            $nextPageUrl = null;
-            $hasMore = true;
-            $currentPageNum = 1;
-            $totalOpportunitiesCount = 0;
+            // === Récupérer les opportunités de toutes les pipelines ===
+            $opportunitiesMap = [];
+            $pipelinesToFetch = !empty($pipelineIds) ? $pipelineIds : [null];
 
-            // Parcourir les pages jusqu'à atteindre la page demandée
-            while ($hasMore && $currentPageNum <= $page) {
-                if ($nextPageUrl) {
-                    $url = $nextPageUrl;
-                } else {
-                    $url = "https://services.leadconnectorhq.com/opportunities/search?locationId={$ghlLocationId}&limit={$pageSize}";
-                }
-                
-                Log::info('Fetching opportunities from GHL API', ['url' => $url, 'api_page' => $currentPageNum]);
-                
-                $response = Http::timeout(60)->withHeaders([
-                    'Authorization' => 'Bearer ' . $ghlToken,
-                    'Version' => '2021-07-28',
-                    'Accept' => 'application/json',
-                ])->get($url);
-                
-                if (!$response->successful()) {
-                    Log::error('GHL Opportunities API Error', [
-                        'status' => $response->status(),
-                        'body' => $response->body(),
-                        'url' => $url
+            foreach ($pipelinesToFetch as $pipelineIdToFetch) {
+                $nextPageUrl = null;
+
+                do {
+                    if ($nextPageUrl) {
+                        $url = $nextPageUrl;
+                    } else {
+                        $url = "https://services.leadconnectorhq.com/opportunities/search?location_id={$ghlLocationId}&limit={$pageSize}";
+                        if (!empty($pipelineIdToFetch)) {
+                            $url .= '&pipeline_id=' . urlencode($pipelineIdToFetch);
+                        }
+                    }
+
+                    Log::info('Fetching opportunities from GHL API', [
+                        'url' => $url,
+                        'pipeline_id' => $pipelineIdToFetch
                     ]);
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Erreur lors du chargement des opportunités'
-                    ], 500);
-                }
-                
-                $data = $response->json();
-                $oppsInThisPage = count($data['opportunities'] ?? []);
-                Log::info('GHL Opportunities API Response', ['opps_in_page' => $oppsInThisPage, 'page' => $currentPageNum]);
-                
-                // Traiter les opportunités seulement si on est à la bonne page
-                if ($currentPageNum == $page && isset($data['opportunities']) && is_array($data['opportunities'])) {
-                    foreach ($data['opportunities'] as $opp) {
+
+                    $response = Http::timeout(60)->withHeaders([
+                        'Authorization' => 'Bearer ' . $ghlToken,
+                        'Version' => '2021-07-28',
+                        'Accept' => 'application/json',
+                    ])->get($url);
+
+                    if (!$response->successful()) {
+                        $errorData = $response->json();
+                        $upstreamMessage = $errorData['message'] ?? null;
+                        Log::error('GHL Opportunities API Error', [
+                            'status' => $response->status(),
+                            'body' => $response->body(),
+                            'url' => $url,
+                            'pipeline_id' => $pipelineIdToFetch
+                        ]);
+                        return response()->json([
+                            'success' => false,
+                            'message' => $upstreamMessage ?: 'Erreur lors du chargement des opportunités'
+                        ], 500);
+                    }
+
+                    $data = $response->json();
+                    $opportunities = $data['opportunities'] ?? [];
+
+                    foreach ($opportunities as $opp) {
+                        $opportunityId = $opp['id'] ?? '';
+                        if (empty($opportunityId) || isset($opportunitiesMap[$opportunityId])) {
+                            continue;
+                        }
+
                         $pipelineId = $opp['pipelineId'] ?? '';
                         $pipelineStageId = $opp['pipelineStageId'] ?? '';
-                        $pipelineName = $pipelinesMap[$pipelineId] ?? $pipelineId;
-                        $stageName = $stagesMap[$pipelineStageId] ?? $pipelineStageId;
-                        
-                        $opportunitiesList[] = [
-                            'id' => $opp['id'] ?? '',
+
+                        $opportunitiesMap[$opportunityId] = [
+                            'id' => $opportunityId,
                             'name' => $opp['name'] ?? 'Sans nom',
                             'monetaryValue' => $opp['monetaryValue'] ?? 0,
-                            'pipelineId' => $pipelineName,
-                            'pipelineStageId' => $stageName,
+                            'pipelineId' => $pipelinesMap[$pipelineId] ?? $pipelineId,
+                            'pipelineStageId' => $stagesMap[$pipelineStageId] ?? $pipelineStageId,
                             'status' => $opp['status'] ?? '',
                             'source' => $opp['source'] ?? '',
                             'contactId' => $opp['contactId'] ?? ''
                         ];
                     }
-                }
-                
-                // Compter le total d'opportunités pour calculer le nombre de pages
-                if ($currentPageNum == 1) {
-                    $totalOpportunitiesCount = $oppsInThisPage;
-                }
-                
-                if (isset($data['meta']['nextPageUrl']) && !empty($data['meta']['nextPageUrl'])) {
-                    $nextPageUrl = $data['meta']['nextPageUrl'];
-                    $hasMore = true;
-                    $currentPageNum++;
-                } else {
-                    $hasMore = false;
-                }
+
+                    $nextPageUrl = $data['meta']['nextPageUrl'] ?? null;
+                } while (!empty($nextPageUrl));
             }
 
-            $totalPages = ceil($totalOpportunitiesCount / $pageSize);
+            $opportunitiesList = array_values($opportunitiesMap);
+            $totalOpportunitiesCount = count($opportunitiesList);
             
-            // Mettre en cache cette page pour 30 minutes
-            \Cache::put($pageCacheKey, [
+            // Mettre en cache pour 30 minutes
+            \Cache::put($cacheKey, [
                 'opportunities' => $opportunitiesList,
-                'total' => $totalOpportunitiesCount,
-                'totalPages' => $totalPages
-            ], now()->addMinutes(30));
+                'total' => $totalOpportunitiesCount
+            ], now()->addMinutes(60));
             
-            Log::info('GHL Opportunities page fetched successfully', ['page' => $page, 'total_opps_in_page' => count($opportunitiesList), 'total_pages' => $totalPages]);
+            Log::info('GHL Opportunities list fetched successfully', [
+                'total_opps' => $totalOpportunitiesCount,
+                'pipelines_count' => count($pipelinesToFetch)
+            ]);
             
             return response()->json([
                 'success' => true,
                 'opportunities' => $opportunitiesList,
                 'total' => $totalOpportunitiesCount,
-                'page' => $page,
+                'page' => 1,
                 'pageSize' => $pageSize,
-                'totalPages' => $totalPages,
+                'totalPages' => 1,
                 'cached' => false
             ]);
         } catch (\Exception $e) {
