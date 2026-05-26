@@ -1178,8 +1178,9 @@
             <!-- Onglets -->
         <div class="tabs-container">
             <div class="tabs">
-                <button class="tab active" onclick="switchTab('persons')">Personnes impliquées</button>
-                <button class="tab" onclick="switchTab('opportunities')">Opportunités liées</button>
+                <button class="tab active" onclick="switchTab(event, 'persons')">Personnes impliquées</button>
+                <button class="tab" onclick="switchTab(event, 'opportunities')">Opportunités liées</button>
+                <button class="tab" onclick="switchTab(event, 'centris-submissions')">Soumission centris</button>
             </div>
         </div>
 
@@ -1346,6 +1347,46 @@
                 </div>
             @endif
         </div>
+
+        <!-- Contenu Soumissions Centris -->
+        <div id="centris-submissions-tab" class="tab-content">
+            <div class="section-header">
+                <h2 class="section-title">Soumission centris</h2>
+            </div>
+
+            <input type="text" class="search-box" placeholder="Rechercher dans les soumissions Centris" id="search-centris-submissions">
+
+            @if(count($centrisSubmissions ?? []) > 0)
+                <table id="centrisSubmissionsTable">
+                    <thead>
+                        <tr>
+                            <th>Prénom</th>
+                            <th>Nom</th>
+                            <th>Email</th>
+                            <th>Téléphone</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($centrisSubmissions as $submission)
+                            <tr data-submission-id="{{ $submission['id'] ?? '' }}">
+                                <td>{{ $submission['firstName'] ?? '-' }}</td>
+                                <td>{{ $submission['lastName'] ?? '-' }}</td>
+                                <td>{{ $submission['email'] ?? '-' }}</td>
+                                <td>{{ $submission['phone'] ?? '-' }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            @else
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M19,3H5C3.9,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1,21 21,20.1 21,19V5C21,3.9 20.1,3 19,3M19,19H5V5H19V19M7,7H17V9H7V7M7,11H17V13H7V11M7,15H13V17H7V15Z"/>
+                    </svg>
+                    <h3>Aucune soumission Centris</h3>
+                    <p>Les soumissions reçues par webhook pour cette fiche apparaîtront ici</p>
+                </div>
+            @endif
+        </div>
         </div>
     </div>
 
@@ -1445,6 +1486,7 @@
         let opportunitiesCache = null; // Cache pour les opportunités GHL
         let opportunitiesLastLoaded = 0;
         let currentOpportunities = @json($opportunities ?? []);
+        let currentCentrisSubmissions = @json($centrisSubmissions ?? []);
 
         // Liste des rôles avec emojis
         const roleOptions = [
@@ -1770,7 +1812,7 @@
             }
         }
 
-        function switchTab(tabName) {
+        function switchTab(event, tabName) {
             // Retirer active de tous les onglets et contenus
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -1794,6 +1836,16 @@
         document.getElementById('search-opportunities')?.addEventListener('input', function(e) {
             const searchTerm = e.target.value.toLowerCase();
             const rows = document.querySelectorAll('#opportunities-tab tbody tr');
+            
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(searchTerm) ? '' : 'none';
+            });
+        });
+
+        document.getElementById('search-centris-submissions')?.addEventListener('input', function(e) {
+            const searchTerm = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('#centris-submissions-tab tbody tr');
             
             rows.forEach(row => {
                 const text = row.textContent.toLowerCase();

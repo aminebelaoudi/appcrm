@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use App\Models\PropertyPerson;
 use App\Models\PropertyOpportunity;
+use App\Models\CentrisSubmission;
 use App\User;
 
 
@@ -420,6 +421,25 @@ class CentrisController extends Controller
             })
             ->toArray() : [];
 
+        $centrisSubmissions = $userId ? CentrisSubmission::where('user_id', $userId)
+            ->where('id_location', $user->id_location)
+            ->where('mls', $property['ListingId'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function($submission) {
+                return [
+                    'id' => $submission->id,
+                    'externalContactId' => $submission->external_contact_id,
+                    'firstName' => $submission->first_name,
+                    'lastName' => $submission->last_name,
+                    'fullName' => $submission->full_name,
+                    'email' => $submission->email,
+                    'phone' => $submission->phone,
+                    'createdAt' => optional($submission->created_at)->format('d/m/Y H:i'),
+                ];
+            })
+            ->toArray() : [];
+
         // Récupérer le nom du member (courtier/agent)
         $memberName = '';
         $apiKey = env('CENTRIS_API_KEY');
@@ -462,7 +482,7 @@ class CentrisController extends Controller
         $idLocation = $user ? $user->id_location : null;
         $locationId = request()->query('locationId');
 
-        return view('centris.property-details', compact('property', 'persons', 'opportunities', 'idLocation', 'locationId', 'memberName'));
+        return view('centris.property-details', compact('property', 'persons', 'opportunities', 'centrisSubmissions', 'idLocation', 'locationId', 'memberName'));
     }
 
     public function getGHLContacts()

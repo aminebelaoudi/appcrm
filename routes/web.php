@@ -5,6 +5,7 @@ use App\Http\Controllers\CentrisController;
 use App\Http\Controllers\PropertyRelationController;
 
 use App\Http\Controllers\GhlAuthController;
+use App\Http\Controllers\CentrisSubmissionController;
 
 
 /*
@@ -42,6 +43,10 @@ Route::get('/api/ghl/contacts', [CentrisController::class, 'getGHLContacts'])
 
 Route::get('/api/ghl/opportunities', [CentrisController::class, 'getGHLOpportunities'])
     ->name('api.ghl.opportunities')
+    ->middleware(['api.rate.limit']);
+
+Route::post('/api/centris/submissions/webhook', [CentrisSubmissionController::class, 'storeWebhook'])
+    ->name('api.centris.submissions.webhook')
     ->middleware(['api.rate.limit']);
 
 // API Routes pour les relations Propriété-Personnes-Opportunités

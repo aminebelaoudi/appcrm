@@ -48,4 +48,12 @@ class User extends Authenticatable
     {
         return $this->hasMany(\App\Models\PropertyOpportunity::class, 'id_location', 'id_location');
     }
+
+    /**
+     * Relation avec les soumissions Centris reçues par webhook
+     */
+    public function centrisSubmissions()
+    {
+        return $this->hasMany(\App\Models\CentrisSubmission::class, 'user_id', 'id');
+    }
 }
