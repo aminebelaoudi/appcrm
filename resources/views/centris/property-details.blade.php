@@ -612,6 +612,21 @@
             color: #333;
         }
 
+        .submission-view-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+        }
+
+        .submission-view-button svg {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
+
         .dropdown-menu {
             display: none;
             /* Fixed so it's not clipped by any overflow */
@@ -1403,6 +1418,7 @@
                             <th>Nom</th>
                             <th>Email</th>
                             <th>Téléphone</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1412,6 +1428,17 @@
                                 <td>{{ $submission['lastName'] ?? '-' }}</td>
                                 <td>{{ $submission['email'] ?? '-' }}</td>
                                 <td>{{ $submission['phone'] ?? '-' }}</td>
+                                <td class="action-menu">
+                                    @if(!empty($submission['externalContactId']))
+                                        <button class="action-button submission-view-button" onclick="viewCentrisSubmissionContact(event, @json($submission['externalContactId']))" title="Voir le contact">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/>
+                                            </svg>
+                                        </button>
+                                    @else
+                                        -
+                                    @endif
+                                </td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -2362,6 +2389,18 @@
             } else {
                 alert('ID du contact introuvable');
             }
+        }
+
+        function viewCentrisSubmissionContact(event, contactId) {
+            event.stopPropagation();
+
+            if (!contactId) {
+                alert('ID du contact introuvable');
+                return;
+            }
+
+            const url = `https://go.optimocrm.com/v2/location/${idLocation}/contacts/detail/${contactId}`;
+            window.open(url, '_blank');
         }
 
         // Fonction pour confirmer la suppression d'une personne
