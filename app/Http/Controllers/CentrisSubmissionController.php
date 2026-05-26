@@ -60,7 +60,6 @@ class CentrisSubmissionController extends Controller
                 'last_name' => $this->normalizeNullableString($request->input('last_name')),
                 'email' => $this->normalizeNullableString($request->input('email')),
                 'phone' => $this->normalizeNullableString($request->input('phone')),
-                'payload' => $request->all(),
             ]
         );
 

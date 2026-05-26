@@ -18,7 +18,6 @@ class CreateCentrisSubmissionsTable extends Migration
             $table->string('last_name')->nullable();
             $table->string('email')->nullable();
             $table->string('phone')->nullable();
-            $table->json('payload')->nullable();
             $table->timestamps();
 
             $table->index('user_id');

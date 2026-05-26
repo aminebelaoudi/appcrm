@@ -186,6 +186,36 @@
             fill: #666;
         }
 
+        .listing-link-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            margin-top: 12px;
+            padding: 10px 14px;
+            background: #e31c23;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .listing-link-button:hover {
+            background: #c71a1f;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(227, 28, 35, 0.2);
+        }
+
+        .listing-link-button svg {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
+        }
+
         .info-section {
             background: white;
             border-radius: 12px;
@@ -1143,6 +1173,15 @@
                             <span>{{ $property['LivingArea'] ?? 0 }}</span>
                         </div>
                     </div>
+
+                    @if(!empty($property['ListingURL']))
+                        <a href="{{ $property['ListingURL'] }}" target="_blank" rel="noopener noreferrer" class="listing-link-button">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z"/>
+                            </svg>
+                            Voir l'inscription
+                        </a>
+                    @endif
                     
                     {{-- Afficher le nom du member (agent) --}}
                     {{-- DEBUG: --}}
@@ -1383,7 +1422,7 @@
                         <path d="M19,3H5C3.9,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1,21 21,20.1 21,19V5C21,3.9 20.1,3 19,3M19,19H5V5H19V19M7,7H17V9H7V7M7,11H17V13H7V11M7,15H13V17H7V15Z"/>
                     </svg>
                     <h3>Aucune soumission Centris</h3>
-                    <p>Les soumissions reçues par webhook pour cette fiche apparaîtront ici</p>
+                    <p>Les soumissions reçues de Centris pour cette fiche apparaîtront ici</p>
                 </div>
             @endif
         </div>

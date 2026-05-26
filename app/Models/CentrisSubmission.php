@@ -17,11 +17,9 @@ class CentrisSubmission extends Model
         'last_name',
         'email',
         'phone',
-        'payload',
     ];
 
     protected $casts = [
-        'payload' => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
