@@ -300,15 +300,25 @@ class CentrisController extends Controller
                 ->groupBy('property_listing_id')
                 ->pluck('total', 'property_listing_id')
                 ->toArray();
+
+            $centrisSubmissionsCounts = CentrisSubmission::where('user_id', $userId)
+                ->where('id_location', $user->id_location)
+                ->whereIn('mls', $listingIds)
+                ->select('mls', \DB::raw('count(*) as total'))
+                ->groupBy('mls')
+                ->pluck('total', 'mls')
+                ->toArray();
             
             foreach ($properties as &$property) {
                 $property['PersonsCount'] = $personsCounts[$property['ListingId']] ?? 0;
                 $property['OpportunitiesCount'] = $opportunitiesCounts[$property['ListingId']] ?? 0;
+                $property['CentrisSubmissionsCount'] = $centrisSubmissionsCounts[$property['ListingId']] ?? 0;
             }
         } else {
             foreach ($properties as &$property) {
                 $property['PersonsCount'] = 0;
                 $property['OpportunitiesCount'] = 0;
+                $property['CentrisSubmissionsCount'] = 0;
             }
         }
 
