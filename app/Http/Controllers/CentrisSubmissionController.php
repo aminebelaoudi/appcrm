@@ -12,6 +12,22 @@ class CentrisSubmissionController extends Controller
 {
     public function storeWebhook(Request $request)
     {
+        $secret = env('CENTRIS_WEBHOOK_SECRET');
+        $providedSecret = $request->header('X-Webhook-Secret');
+
+        if (!$secret || !$providedSecret || !hash_equals($secret, $providedSecret)) {
+            Log::warning('Centris submission rejected: invalid webhook secret', [
+                'ip' => $request->ip(),
+                'id_location' => $request->input('id_location'),
+                'mls' => $request->input('MLS'),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Webhook non autorisé',
+            ], 401);
+        }
+
         $validator = Validator::make($request->all(), [
             'id' => 'nullable|string',
             'first_name' => 'nullable|string',
