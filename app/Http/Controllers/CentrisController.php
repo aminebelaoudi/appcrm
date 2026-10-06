@@ -919,7 +919,7 @@ class CentrisController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur serveur: ' . $e->getMessage(),
+                'message' => $e->getMessage(),
             ], 500);
         }
     }
