@@ -1458,7 +1458,7 @@
                     <span class="info-label">Année de construction</span>
                     <span class="info-value">{{ $property['YearBuilt'] ?? '-' }}</span>
                 </div>
-                @if(($locationId ?? '') === 'FqqkdWQ0F0QPYOpLYXnz')
+                @if(in_array(($locationId ?? ''), ['FqqkdWQ0F0QPYOpLYXnz', 'NWecRiHGKPoCy4dqF59r'], true))
                     <button type="button" class="social-post-button" onclick="openSocialPostModal()">
                         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true">
                             <rect x="3" y="4" width="18" height="18" rx="2"></rect>
