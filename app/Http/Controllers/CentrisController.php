@@ -1065,8 +1065,21 @@ class CentrisController extends Controller
         }
 
         $responseData = $accountsResponse->json();
-        $accounts = $this->normalizeGhlList($responseData, ['accounts', 'data', 'items', 'results', 'socialAccounts']);
+        $accounts = data_get($responseData, 'results.accounts', []);
+        if (empty($accounts)) {
+            $accounts = $this->normalizeGhlList($responseData, ['accounts', 'data', 'items', 'socialAccounts']);
+        }
+
         $filteredAccounts = array_values(array_filter(array_map(function($account) use ($user) {
+            if (!is_array($account)) {
+                Log::warning('Invalid GHL social account format', [
+                    'locationId' => $user->id_location,
+                    'type' => gettype($account),
+                ]);
+
+                return null;
+            }
+
             $platform = strtolower($account['platform'] ?? '');
             if (!in_array($platform, ['facebook', 'instagram'], true)) {
                 Log::debug('GHL Social Account ignored: unsupported platform', [
@@ -1112,6 +1125,10 @@ class CentrisController extends Controller
                 return $account['selectable'] ?? false;
             })),
             'raw_platforms' => array_values(array_unique(array_filter(array_map(function($account) {
+                if (!is_array($account)) {
+                    return null;
+                }
+
                 return $account['platform'] ?? null;
             }, $accounts)))),
             'filtered_accounts' => array_map(function($account) {
