@@ -1068,23 +1068,34 @@ class CentrisController extends Controller
 
         return array_values(array_filter(array_map(function($account) {
             $platform = strtolower($account['platform'] ?? '');
-            if (!in_array($platform, ['facebook', 'instagram'])) {
+            if (!in_array($platform, ['facebook', 'instagram'], true)) {
                 return null;
+            }
+
+            $selectable = !empty($account['id']);
+
+            if (array_key_exists('active', $account) && $account['active'] === false) {
+                $selectable = false;
+            }
+
+            if (array_key_exists('isExpired', $account) && $account['isExpired'] === true) {
+                $selectable = false;
+            }
+
+            if (array_key_exists('deleted', $account) && $account['deleted'] === true) {
+                $selectable = false;
             }
 
             return [
                 'id' => $account['id'] ?? '',
-                'name' => $account['name'] ?? 'Compte sans nom',
+                'name' => $account['name'] ?? 'Compte social',
                 'platform' => $platform,
                 'avatar' => $account['avatar'] ?? null,
                 'type' => $account['type'] ?? null,
-                'active' => (bool) ($account['active'] ?? false),
-                'isExpired' => (bool) ($account['isExpired'] ?? false),
-                'deleted' => (bool) ($account['deleted'] ?? false),
-                'selectable' => !empty($account['id'])
-                    && (bool) ($account['active'] ?? false)
-                    && !(bool) ($account['isExpired'] ?? false)
-                    && !(bool) ($account['deleted'] ?? false),
+                'active' => $account['active'] ?? true,
+                'isExpired' => $account['isExpired'] ?? false,
+                'deleted' => $account['deleted'] ?? false,
+                'selectable' => $selectable,
             ];
         }, $accounts)));
     }
