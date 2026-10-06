@@ -1064,7 +1064,7 @@ class CentrisController extends Controller
             throw new \RuntimeException('Erreur lors du chargement des comptes sociaux');
         }
 
-        $accounts = $this->normalizeGhlList($accountsResponse->json(), ['accounts', 'data']);
+        $accounts = $this->normalizeGhlList($accountsResponse->json(), ['accounts', 'data', 'items', 'results', 'socialAccounts']);
 
         return array_values(array_filter(array_map(function($account) {
             $platform = strtolower($account['platform'] ?? '');
@@ -1073,18 +1073,6 @@ class CentrisController extends Controller
             }
 
             $selectable = !empty($account['id']);
-
-            if (array_key_exists('active', $account) && $account['active'] === false) {
-                $selectable = false;
-            }
-
-            if (array_key_exists('isExpired', $account) && $account['isExpired'] === true) {
-                $selectable = false;
-            }
-
-            if (array_key_exists('deleted', $account) && $account['deleted'] === true) {
-                $selectable = false;
-            }
 
             return [
                 'id' => $account['id'] ?? '',
