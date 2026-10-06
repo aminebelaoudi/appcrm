@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use App\Models\PropertyPerson;
 use App\Models\PropertyOpportunity;
 use App\Models\CentrisSubmission;
@@ -885,5 +887,423 @@ class CentrisController extends Controller
                 'message' => 'Erreur serveur: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    public function getGHLSocialAccounts($listingKey)
+    {
+        try {
+            $locationId = request()->query('locationId');
+            $user = $this->getUserForLocationRequest($locationId);
+
+            if ($user instanceof \Illuminate\Http\JsonResponse) {
+                return $user;
+            }
+
+            $accounts = $this->fetchFilteredGhlSocialAccounts($user);
+
+            $property = $this->fetchCentrisPropertyByListingKey($listingKey);
+            $summary = $property ? $this->buildSocialPostSummary($property) : '';
+            $mediaCount = count($this->fetchCentrisPropertyPhotos($listingKey, 5));
+
+            return response()->json([
+                'success' => true,
+                'accounts' => $accounts,
+                'summary' => $summary,
+                'mediaCount' => $mediaCount,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('GHL Social Accounts Exception', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur serveur: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function createGHLSocialPost(Request $request, $listingKey)
+    {
+        $validator = Validator::make($request->all(), [
+            'locationId' => 'required|string',
+            'accountIds' => 'required|array|min:1',
+            'accountIds.*' => 'required|string',
+            'scheduleDate' => 'required|date|after:now',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Données invalides',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $user = $this->getUserForLocationRequest($request->input('locationId'));
+
+            if ($user instanceof \Illuminate\Http\JsonResponse) {
+                return $user;
+            }
+
+            $accounts = $this->fetchFilteredGhlSocialAccounts($user);
+            $selectableAccountIds = array_column(array_filter($accounts, function($account) {
+                return $account['selectable'] ?? false;
+            }), 'id');
+            $invalidAccountIds = array_diff($request->input('accountIds'), $selectableAccountIds);
+
+            if (!empty($invalidAccountIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Un ou plusieurs comptes sociaux ne sont pas disponibles pour la planification.',
+                ], 422);
+            }
+
+            $property = $this->fetchCentrisPropertyByListingKey($listingKey);
+            if (!$property) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Propriété introuvable',
+                ], 404);
+            }
+
+            $photos = $this->fetchCentrisPropertyPhotos($listingKey, 5);
+            if (empty($photos)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Aucune image disponible pour cette inscription.',
+                ], 422);
+            }
+
+            $ghlUserId = $this->fetchFirstActiveGhlUserId($user);
+            if (!$ghlUserId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Aucun utilisateur GHL valide trouvé pour cette location.',
+                ], 422);
+            }
+
+            $scheduleDate = \Carbon\Carbon::parse($request->input('scheduleDate'), config('app.timezone'))
+                ->utc()
+                ->toIso8601String();
+
+            $payload = [
+                'accountIds' => array_values($request->input('accountIds')),
+                'summary' => $this->buildSocialPostSummary($property),
+                'media' => array_map(function($photo) {
+                    return [
+                        'url' => $photo['MediaURL'],
+                        'type' => $this->guessMediaType($photo['MediaURL']),
+                    ];
+                }, $photos),
+                'status' => 'scheduled',
+                'scheduleDate' => $scheduleDate,
+                'type' => 'post',
+                'userId' => $ghlUserId,
+            ];
+
+            $response = Http::timeout(60)->withHeaders([
+                'Authorization' => 'Bearer ' . $user->ghl_access_token,
+                'Version' => 'v3',
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ])->post("https://services.leadconnectorhq.com/social-media-posting/{$user->id_location}/posts", $payload);
+
+            if (!$response->successful()) {
+                $errorData = $response->json();
+                $upstreamMessage = $errorData['message'] ?? null;
+                Log::error('GHL Social Post API Error', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'locationId' => $user->id_location,
+                    'listingKey' => $listingKey,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $upstreamMessage ?: 'Erreur lors de la planification du post social',
+                ], 500);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Post social planifié avec succès',
+                'post' => $response->json(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('GHL Social Post Exception', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'listingKey' => $listingKey,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur serveur: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function fetchFilteredGhlSocialAccounts(User $user)
+    {
+        $accountsResponse = Http::timeout(30)->withHeaders([
+            'Authorization' => 'Bearer ' . $user->ghl_access_token,
+            'Version' => 'v3',
+            'Accept' => 'application/json',
+        ])->get("https://services.leadconnectorhq.com/social-media-posting/{$user->id_location}/accounts");
+
+        if (!$accountsResponse->successful()) {
+            Log::error('GHL Social Accounts API Error', [
+                'status' => $accountsResponse->status(),
+                'body' => $accountsResponse->body(),
+                'locationId' => $user->id_location,
+            ]);
+
+            throw new \RuntimeException('Erreur lors du chargement des comptes sociaux');
+        }
+
+        $accounts = $this->normalizeGhlList($accountsResponse->json(), ['accounts', 'data']);
+
+        return array_values(array_filter(array_map(function($account) {
+            $platform = strtolower($account['platform'] ?? '');
+            if (!in_array($platform, ['facebook', 'instagram'])) {
+                return null;
+            }
+
+            return [
+                'id' => $account['id'] ?? '',
+                'name' => $account['name'] ?? 'Compte sans nom',
+                'platform' => $platform,
+                'avatar' => $account['avatar'] ?? null,
+                'type' => $account['type'] ?? null,
+                'active' => (bool) ($account['active'] ?? false),
+                'isExpired' => (bool) ($account['isExpired'] ?? false),
+                'deleted' => (bool) ($account['deleted'] ?? false),
+                'selectable' => !empty($account['id'])
+                    && (bool) ($account['active'] ?? false)
+                    && !(bool) ($account['isExpired'] ?? false)
+                    && !(bool) ($account['deleted'] ?? false),
+            ];
+        }, $accounts)));
+    }
+
+    private function getUserForLocationRequest($locationId)
+    {
+        if (empty($locationId)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Aucun identifiant d\'emplacement fourni',
+            ], 400);
+        }
+
+        $user = User::where('id_location', $locationId)->first();
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Emplacement non trouvé',
+            ], 404);
+        }
+
+        if (!$user->ghl_access_token) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Configuration GHL manquante pour cet utilisateur',
+            ], 500);
+        }
+
+        return $user;
+    }
+
+    private function fetchCentrisPropertyByListingKey($listingKey)
+    {
+        $apiKey = env('CENTRIS_API_KEY');
+        $escapedListingKey = $this->escapeODataString($listingKey);
+        $propertyUrl = "https://datadistributionqc.centris.ca/v1/odata/Property?\$filter=ListingKey eq '$escapedListingKey'";
+
+        $propertyResponse = Http::timeout(30)->withHeaders([
+            'Authorization' => 'Bearer ' . $apiKey,
+            'Accept' => 'application/json',
+        ])->get($propertyUrl);
+
+        if (!$propertyResponse->successful()) {
+            Log::warning('Failed to fetch Centris property for social post', [
+                'listingKey' => $listingKey,
+                'status' => $propertyResponse->status(),
+                'body' => $propertyResponse->body(),
+            ]);
+            return null;
+        }
+
+        return $propertyResponse->json()['value'][0] ?? null;
+    }
+
+    private function fetchCentrisPropertyPhotos($listingKey, $limit = 5)
+    {
+        $apiKey = env('CENTRIS_API_KEY');
+        $escapedListingKey = $this->escapeODataString($listingKey);
+        $mediaUrl = "https://datadistributionqc.centris.ca/v1/odata/Media?\$filter=ResourceRecordKey eq '$escapedListingKey' and MediaCategory eq 'Photo'";
+
+        $mediaResponse = Http::timeout(30)->withHeaders([
+            'Authorization' => 'Bearer ' . $apiKey,
+            'Accept' => 'application/json',
+        ])->get($mediaUrl);
+
+        if (!$mediaResponse->successful()) {
+            Log::warning('Failed to fetch Centris media for social post', [
+                'listingKey' => $listingKey,
+                'status' => $mediaResponse->status(),
+                'body' => $mediaResponse->body(),
+            ]);
+            return [];
+        }
+
+        $media = array_filter($mediaResponse->json()['value'] ?? [], function($item) {
+            return !empty($item['MediaURL']);
+        });
+
+        usort($media, function($a, $b) {
+            return ($a['Order'] ?? 999) <=> ($b['Order'] ?? 999);
+        });
+
+        return array_slice(array_values($media), 0, $limit);
+    }
+
+    private function fetchFirstActiveGhlUserId(User $user)
+    {
+        $companyId = env('companyId');
+        if (!$companyId) {
+            Log::error('Missing companyId env for GHL users search');
+            return null;
+        }
+
+        $response = Http::timeout(30)->withHeaders([
+            'Authorization' => 'Bearer ' . $user->ghl_access_token,
+            'Version' => 'v3',
+            'Accept' => 'application/json',
+        ])->get('https://services.leadconnectorhq.com/users/search', [
+            'companyId' => $companyId,
+            'limit' => 2,
+            'locationId' => $user->id_location,
+        ]);
+
+        if (!$response->successful()) {
+            Log::error('GHL Users Search API Error', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'locationId' => $user->id_location,
+            ]);
+            return null;
+        }
+
+        $users = $this->normalizeGhlList($response->json(), ['users', 'data']);
+
+        foreach ($users as $ghlUser) {
+            $isDeleted = (bool) ($ghlUser['deleted'] ?? false);
+            $isActive = array_key_exists('active', $ghlUser) ? (bool) $ghlUser['active'] : true;
+            $userId = $ghlUser['id'] ?? $ghlUser['_id'] ?? null;
+
+            if ($userId && !$isDeleted && $isActive) {
+                return $userId;
+            }
+        }
+
+        return null;
+    }
+
+    private function buildSocialPostSummary(array $property)
+    {
+        $addressParts = [];
+        if (!empty($property['StreetNumberStart'])) {
+            $streetNumber = $property['StreetNumberStart'];
+            if (!empty($property['StreetNumberEnd'])) {
+                $streetNumber .= ' - ' . $property['StreetNumberEnd'];
+            }
+            $addressParts[] = $streetNumber;
+        }
+        foreach (['StreetShortName', 'Township', 'PostalCode'] as $field) {
+            if (!empty($property[$field])) {
+                $addressParts[] = $property[$field];
+            }
+        }
+
+        $lines = ['Nouvelle inscription disponible.'];
+        $address = implode(', ', $addressParts);
+        if ($address !== '') {
+            $lines[] = '';
+            $lines[] = $address;
+        }
+
+        $type = $property['PropertySubType'] ?? $property['PropertyType'] ?? null;
+        if (!empty($type)) {
+            $lines[] = $type;
+        }
+
+        $price = $property['ListPrice'] ?? null;
+        $isRent = false;
+        if (empty($price) && !empty($property['RentPrice'])) {
+            $price = $property['RentPrice'];
+            $isRent = true;
+        }
+        if (!empty($price)) {
+            $lines[] = 'Prix : ' . number_format((float) $price, 0, ',', ' ') . ' $' . ($isRent ? '/mois' : '');
+        }
+
+        $details = [];
+        if (!empty($property['BedroomsTotal'])) {
+            $details[] = 'Chambres : ' . $property['BedroomsTotal'];
+        }
+        $bathrooms = ($property['BathroomsFull'] ?? 0) + ($property['BathroomsPartial'] ?? 0);
+        if ($bathrooms > 0) {
+            $details[] = 'Salles de bain : ' . $bathrooms;
+        }
+        if (!empty($property['LivingArea'])) {
+            $details[] = 'Superficie : ' . $property['LivingArea'];
+        }
+        if (!empty($details)) {
+            $lines[] = '';
+            $lines = array_merge($lines, $details);
+        }
+
+        if (!empty($property['ListingURL'])) {
+            $lines[] = '';
+            $lines[] = 'Découvrez cette propriété ici :';
+            $lines[] = $property['ListingURL'];
+        }
+
+        return implode("\n", $lines);
+    }
+
+    private function guessMediaType($url)
+    {
+        $path = strtolower(parse_url($url, PHP_URL_PATH) ?? '');
+        if (substr($path, -4) === '.png') {
+            return 'image/png';
+        }
+        if (substr($path, -5) === '.webp') {
+            return 'image/webp';
+        }
+        return 'image/jpeg';
+    }
+
+    private function escapeODataString($value)
+    {
+        return str_replace("'", "''", $value);
+    }
+
+    private function normalizeGhlList($data, array $candidateKeys)
+    {
+        if (!is_array($data)) {
+            return [];
+        }
+
+        foreach ($candidateKeys as $key) {
+            if (isset($data[$key]) && is_array($data[$key])) {
+                return $data[$key];
+            }
+        }
+
+        return array_values($data) === $data ? $data : [];
     }
 }

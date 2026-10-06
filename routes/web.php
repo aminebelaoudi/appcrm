@@ -45,6 +45,14 @@ Route::get('/api/ghl/opportunities', [CentrisController::class, 'getGHLOpportuni
     ->name('api.ghl.opportunities')
     ->middleware(['api.rate.limit']);
 
+Route::get('/api/properties/{listingKey}/social-accounts', [CentrisController::class, 'getGHLSocialAccounts'])
+    ->name('api.property.social.accounts')
+    ->middleware(['api.rate.limit']);
+
+Route::post('/api/properties/{listingKey}/social-posts', [CentrisController::class, 'createGHLSocialPost'])
+    ->name('api.property.social.posts')
+    ->middleware(['api.rate.limit']);
+
 Route::post('/api/centris/submissions/webhook', [CentrisSubmissionController::class, 'storeWebhook'])
     ->name('api.centris.submissions.webhook')
     ->middleware(['api.rate.limit']);
