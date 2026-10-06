@@ -1064,15 +1064,30 @@ class CentrisController extends Controller
             throw new \RuntimeException('Erreur lors du chargement des comptes sociaux');
         }
 
-        $accounts = $this->normalizeGhlList($accountsResponse->json(), ['accounts', 'data', 'items', 'results', 'socialAccounts']);
-
-        return array_values(array_filter(array_map(function($account) {
+        $responseData = $accountsResponse->json();
+        $accounts = $this->normalizeGhlList($responseData, ['accounts', 'data', 'items', 'results', 'socialAccounts']);
+        $filteredAccounts = array_values(array_filter(array_map(function($account) use ($user) {
             $platform = strtolower($account['platform'] ?? '');
             if (!in_array($platform, ['facebook', 'instagram'], true)) {
+                Log::debug('GHL Social Account ignored: unsupported platform', [
+                    'locationId' => $user->id_location,
+                    'account_id' => $account['id'] ?? null,
+                    'account_name' => $account['name'] ?? null,
+                    'platform' => $account['platform'] ?? null,
+                    'available_keys' => array_keys($account),
+                ]);
                 return null;
             }
 
             $selectable = !empty($account['id']);
+            if (!$selectable) {
+                Log::debug('GHL Social Account ignored: missing id', [
+                    'locationId' => $user->id_location,
+                    'account_name' => $account['name'] ?? null,
+                    'platform' => $account['platform'] ?? null,
+                    'available_keys' => array_keys($account),
+                ]);
+            }
 
             return [
                 'id' => $account['id'] ?? '',
@@ -1086,6 +1101,43 @@ class CentrisController extends Controller
                 'selectable' => $selectable,
             ];
         }, $accounts)));
+
+        Log::info('GHL Social Accounts fetched', [
+            'locationId' => $user->id_location,
+            'response_status' => $accountsResponse->status(),
+            'response_top_level_keys' => is_array($responseData) ? array_keys($responseData) : [],
+            'raw_accounts_count' => count($accounts),
+            'filtered_accounts_count' => count($filteredAccounts),
+            'selectable_accounts_count' => count(array_filter($filteredAccounts, function($account) {
+                return $account['selectable'] ?? false;
+            })),
+            'raw_platforms' => array_values(array_unique(array_filter(array_map(function($account) {
+                return $account['platform'] ?? null;
+            }, $accounts)))),
+            'filtered_accounts' => array_map(function($account) {
+                return [
+                    'id' => $account['id'] ?? null,
+                    'name' => $account['name'] ?? null,
+                    'platform' => $account['platform'] ?? null,
+                    'type' => $account['type'] ?? null,
+                    'active' => $account['active'] ?? null,
+                    'isExpired' => $account['isExpired'] ?? null,
+                    'deleted' => $account['deleted'] ?? null,
+                    'selectable' => $account['selectable'] ?? false,
+                ];
+            }, $filteredAccounts),
+        ]);
+
+        if (empty($filteredAccounts)) {
+            Log::warning('GHL Social Accounts empty after filtering', [
+                'locationId' => $user->id_location,
+                'response_top_level_keys' => is_array($responseData) ? array_keys($responseData) : [],
+                'raw_accounts_count' => count($accounts),
+                'raw_accounts_preview' => array_slice($accounts, 0, 5),
+            ]);
+        }
+
+        return $filteredAccounts;
     }
 
     private function getUserForLocationRequest($locationId)
