@@ -8,17 +8,16 @@ use App\User;
 use Carbon\Carbon;
 use Endroid\QrCode\QrCode;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 
 class OpenHouseController extends Controller
 {
-    public function defaults($listingKey)
+    public function defaults(Request $request, $listingKey)
     {
-        $this->ensureAllowedLocation();
-        $user = Auth::user();
+        $user = $this->userForSignedRequest($request);
         $property = $this->propertyForUser($listingKey, $user);
         $member = $this->member($property['ListAgentKey'] ?? null);
         $location = $this->location($user);
@@ -35,7 +34,7 @@ class OpenHouseController extends Controller
 
     public function store(Request $request, $listingKey)
     {
-        $this->ensureAllowedLocation();
+        $user = $this->userForSignedRequest($request);
         $data = $this->validate($request, [
             'startsAt' => 'required|date_format:Y-m-d\TH:i',
             'endsAt' => 'required|date_format:Y-m-d\TH:i',
@@ -60,7 +59,6 @@ class OpenHouseController extends Controller
             return response()->json(['message' => 'Vérifiez les heures de début et de fin.'], 422);
         }
 
-        $user = Auth::user();
         $property = $this->propertyForUser($listingKey, $user);
         $photos = $this->photos($listingKey);
         if (!$photos) {
@@ -113,10 +111,10 @@ class OpenHouseController extends Controller
         return response()->json($this->publicDetails($openHouse), 201);
     }
 
-    public function registrations($openHouseId)
+    public function registrations(Request $request, $openHouseId)
     {
-        $this->ensureAllowedLocation();
-        $openHouse = OpenHouse::where('user_id', Auth::id())->findOrFail($openHouseId);
+        $user = $this->userForSignedRequest($request);
+        $openHouse = OpenHouse::where('user_id', $user->id)->findOrFail($openHouseId);
         $visitors = $openHouse->registrations()->latest()->get()->map(function ($visitor) use ($openHouse) {
             return [
                 'name' => trim($visitor->first_name.' '.$visitor->last_name),
@@ -221,6 +219,10 @@ class OpenHouseController extends Controller
             'id' => $openHouse->id,
             'url' => route('open-houses.public', $openHouse->public_token),
             'qrUrl' => route('open-houses.qr', $openHouse->public_token),
+            'registrationsUrl' => URL::temporarySignedRoute('open-houses.registrations', now()->addHours(2), [
+                'openHouseId' => $openHouse->id,
+                'locationId' => $openHouse->id_location,
+            ], false),
             'startsAt' => $openHouse->starts_at->timezone($openHouse->timezone)->format('d/m/Y H:i'),
             'endsAt' => $openHouse->ends_at->timezone($openHouse->timezone)->format('H:i'),
             'visitorCount' => 0,
@@ -345,8 +347,11 @@ class OpenHouseController extends Controller
             && in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true);
     }
 
-    private function ensureAllowedLocation()
+    private function userForSignedRequest(Request $request)
     {
-        abort_unless(in_array(Auth::user()->id_location, config('open_houses.allowed_location_ids'), true), 403);
+        abort_unless($request->hasValidSignature(false), 403, 'Lien expiré ou invalide. Rechargez la fiche.');
+        $locationId = $request->query('locationId');
+        abort_unless(is_string($locationId) && in_array($locationId, config('open_houses.allowed_location_ids'), true), 403);
+        return User::where('id_location', $locationId)->firstOrFail();
     }
 }

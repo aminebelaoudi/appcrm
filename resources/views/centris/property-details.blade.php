@@ -1746,6 +1746,10 @@
                                 $visitEnd = $visit->ends_at->copy()->timezone($visit->timezone);
                                 $visitUrl = route('open-houses.public', $visit->public_token);
                                 $qrUrl = route('open-houses.qr', $visit->public_token);
+                                $registrationsUrl = \Illuminate\Support\Facades\URL::temporarySignedRoute('open-houses.registrations', now()->addHours(2), [
+                                    'openHouseId' => $visit->id,
+                                    'locationId' => $idLocation,
+                                ], false);
                             @endphp
                             <tr>
                                 <td>{{ $visitStart->format('d/m/Y H:i') }} à {{ $visitEnd->format('H:i') }}</td>
@@ -1754,7 +1758,7 @@
                                     <a href="{{ $visitUrl }}" target="_blank" rel="noopener noreferrer">Voir la page</a>
                                     <button type="button" data-url="{{ $visitUrl }}" onclick="copyOpenHouseUrl(this)">Copier le lien</button>
                                     <a href="{{ $qrUrl }}" download="visite-libre-{{ $visit->listing_id }}.svg">QR</a>
-                                    <button type="button" data-id="{{ $visit->id }}" onclick="openHouseVisitors(this)">Visiteurs</button>
+                                    <button type="button" data-url="{{ $registrationsUrl }}" onclick="openHouseVisitors(this)">Visiteurs</button>
                                 </div></td>
                             </tr>
                         @endforeach
@@ -1914,11 +1918,23 @@
         </div>
     </div>
 
+    @php
+        $openHouseDefaultsUrl = $openHouseEnabled
+            ? \Illuminate\Support\Facades\URL::temporarySignedRoute('open-houses.defaults', now()->addHours(2), [
+                'listingKey' => $property['ListingKey'], 'locationId' => $idLocation,
+            ], false) : null;
+        $openHouseStoreUrl = $openHouseEnabled
+            ? \Illuminate\Support\Facades\URL::temporarySignedRoute('open-houses.store', now()->addHours(2), [
+                'listingKey' => $property['ListingKey'], 'locationId' => $idLocation,
+            ], false) : null;
+    @endphp
     <script>
         // Variables globales
         const idLocation = '{{ $idLocation }}';
         const propertyListingId = '{{ $property["ListingId"] ?? "" }}';
         const propertyListingKey = @json($property["ListingKey"] ?? "");
+        const openHouseDefaultsUrl = @json($openHouseDefaultsUrl);
+        const openHouseStoreUrl = @json($openHouseStoreUrl);
         const socialPostLocationId = @json($locationId);
         const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
         
@@ -1976,7 +1992,7 @@
             setOpenHouseAlert('');
             modal.classList.add('open');
             try {
-                const response = await fetch(`/properties/${encodeURIComponent(propertyListingKey)}/open-house/defaults`, {
+                const response = await fetch(openHouseDefaultsUrl, {
                     headers: { 'Accept': 'application/json' }, credentials: 'same-origin'
                 });
                 const data = await response.json();
@@ -2026,9 +2042,9 @@
             submit.textContent = 'Création...';
             setOpenHouseAlert('');
             try {
-                const response = await fetch(`/properties/${encodeURIComponent(propertyListingKey)}/open-houses`, {
+                const response = await fetch(openHouseStoreUrl, {
                     method: 'POST',
-                    headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+                    headers: { 'Accept': 'application/json' },
                     credentials: 'same-origin',
                     body: new FormData(event.target)
                 });
@@ -2041,7 +2057,7 @@
                 result.innerHTML = `<strong>La visite libre est prête.</strong><br><a href="${escapeHtml(data.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(data.url)}</a><img src="${escapeHtml(data.qrUrl)}" alt="Code QR de la visite"><div class="open-house-actions"><button type="button" data-url="${escapeHtml(data.url)}" onclick="copyOpenHouseUrl(this)">Copier le lien</button><a href="${escapeHtml(data.qrUrl)}" download="visite-libre.svg">Télécharger le QR</a></div>`;
                 result.classList.add('show');
                 const row = document.createElement('tr');
-                row.innerHTML = `<td>${escapeHtml(data.startsAt)} à ${escapeHtml(data.endsAt)}</td><td>0</td><td><div class="open-house-actions"><a href="${escapeHtml(data.url)}" target="_blank" rel="noopener noreferrer">Voir la page</a><button type="button" data-url="${escapeHtml(data.url)}" onclick="copyOpenHouseUrl(this)">Copier le lien</button><a href="${escapeHtml(data.qrUrl)}" download="visite-libre.svg">QR</a><button type="button" data-id="${Number(data.id)}" onclick="openHouseVisitors(this)">Visiteurs</button></div></td>`;
+                row.innerHTML = `<td>${escapeHtml(data.startsAt)} à ${escapeHtml(data.endsAt)}</td><td>0</td><td><div class="open-house-actions"><a href="${escapeHtml(data.url)}" target="_blank" rel="noopener noreferrer">Voir la page</a><button type="button" data-url="${escapeHtml(data.url)}" onclick="copyOpenHouseUrl(this)">Copier le lien</button><a href="${escapeHtml(data.qrUrl)}" download="visite-libre.svg">QR</a><button type="button" data-url="${escapeHtml(data.registrationsUrl)}" onclick="openHouseVisitors(this)">Visiteurs</button></div></td>`;
                 document.getElementById('openHousesBody').prepend(row);
                 document.getElementById('openHousesTable').style.display = '';
                 document.getElementById('openHousesEmpty').style.display = 'none';
@@ -2060,7 +2076,7 @@
             modal.classList.add('open');
             list.innerHTML = '<div class="social-modal-note">Chargement...</div>';
             try {
-                const response = await fetch(`/open-houses/${encodeURIComponent(button.dataset.id)}/registrations`, {
+                const response = await fetch(button.dataset.url, {
                     headers: { 'Accept': 'application/json' }, credentials: 'same-origin'
                 });
                 const data = await response.json();

@@ -37,13 +37,6 @@ Route::get('/properties/{listingKey}', [CentrisController::class, 'showPropertyD
     ->name('centris.property.details')
     ->middleware('iframe');
 
-Route::get('/properties/{listingKey}/open-house/defaults', [OpenHouseController::class, 'defaults'])
-    ->name('open-houses.defaults')->middleware('auth');
-Route::post('/properties/{listingKey}/open-houses', [OpenHouseController::class, 'store'])
-    ->name('open-houses.store')->middleware('auth');
-Route::get('/open-houses/{openHouseId}/registrations', [OpenHouseController::class, 'registrations'])
-    ->name('open-houses.registrations')->middleware('auth');
-
 Route::get('/visites-libres/{token}', [OpenHouseController::class, 'show'])
     ->name('open-houses.public');
 Route::get('/visites-libres/{token}/qr.svg', [OpenHouseController::class, 'qr'])

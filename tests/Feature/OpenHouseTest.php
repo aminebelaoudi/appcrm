@@ -11,6 +11,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -68,6 +69,11 @@ class OpenHouseTest extends TestCase
         return new FulfilledPromise(new Psr7Response($status, ['Content-Type' => 'application/json'], json_encode($data)));
     }
 
+    private function signedUrl($name, array $parameters)
+    {
+        return URL::temporarySignedRoute($name, now()->addHours(2), $parameters, false);
+    }
+
     public function test_creates_a_public_open_house_from_centris_data()
     {
         $user = $this->user();
@@ -85,20 +91,48 @@ class OpenHouseTest extends TestCase
         ]);
 
         $start = now('America/Toronto')->addDays(2)->setTime(11, 0);
-        $response = $this->actingAs($user)->postJson('/properties/key-1/open-houses', [
+        $response = $this->postJson($this->signedUrl('open-houses.store', [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ]), [
             'startsAt' => $start->format('Y-m-d\TH:i'),
             'endsAt' => $start->copy()->addHours(2)->format('Y-m-d\TH:i'),
             'timezone' => 'America/Toronto',
             'brokerName' => 'Courtier Test',
         ]);
 
-        $response->assertStatus(201)->assertJsonStructure(['id', 'url', 'qrUrl']);
+        $response->assertStatus(201)->assertJsonStructure(['id', 'url', 'qrUrl', 'registrationsUrl']);
         $visit = OpenHouse::firstOrFail();
         $this->assertSame('123 Rue Test, Montréal', $visit->address);
         $this->assertSame(['https://example.com/first.jpg', 'https://example.com/second.jpg'], $visit->photos);
         $this->assertSame($start->copy()->utc()->format('Y-m-d H:i'), $visit->starts_at->format('Y-m-d H:i'));
         $this->get('/visites-libres/'.$visit->public_token)->assertOk()->assertSee('123 Rue Test');
         $this->get('/visites-libres/'.$visit->public_token.'/qr.svg')->assertOk()->assertHeader('Content-Type', 'image/svg+xml');
+        $this->getJson($response->json('registrationsUrl'))->assertOk()->assertJson(['visitors' => []]);
+    }
+
+    public function test_defaults_load_without_a_session_from_a_signed_url()
+    {
+        $user = $this->user();
+        Http::fake([
+            'datadistributionqc.centris.ca/*Property*' => $this->httpResponse(['value' => [[
+                'ListingKey' => 'key-1', 'ListOfficeKey' => 'office-1', 'ListAgentKey' => 'agent-1',
+            ]]]),
+            'datadistributionqc.centris.ca/*Member*' => $this->httpResponse(['value' => [[
+                'MemberFullName' => 'Courtier Test', 'MemberEmail' => 'broker@example.com',
+            ]]]),
+            'datadistributionqc.centris.ca/*Media*' => $this->httpResponse(['value' => [[
+                'MediaURL' => 'https://example.com/house.jpg', 'Order' => 1,
+            ]]]),
+            'services.leadconnectorhq.com/locations/*' => $this->httpResponse(['location' => [
+                'timezone' => 'America/Toronto',
+            ]]),
+        ]);
+
+        $this->getJson($this->signedUrl('open-houses.defaults', [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ]))->assertOk()->assertJson([
+            'brokerName' => 'Courtier Test', 'brokerEmail' => 'broker@example.com', 'photoCount' => 1,
+        ]);
     }
 
     public function test_registration_adds_a_tag_without_replacing_existing_tags()
@@ -153,7 +187,9 @@ class OpenHouseTest extends TestCase
         ]);
 
         $start = now('America/Toronto')->addDays(2)->setTime(11, 0);
-        $this->actingAs($user)->postJson('/properties/key-1/open-houses', [
+        $this->postJson($this->signedUrl('open-houses.store', [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ]), [
             'startsAt' => $start->format('Y-m-d\TH:i'),
             'endsAt' => $start->copy()->addHour()->format('Y-m-d\TH:i'),
             'timezone' => 'America/Toronto',
@@ -173,7 +209,9 @@ class OpenHouseTest extends TestCase
         ]);
 
         $start = now('America/Toronto')->addDays(2)->setTime(11, 0);
-        $this->actingAs($user)->postJson('/properties/key-1/open-houses', [
+        $this->postJson($this->signedUrl('open-houses.store', [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ]), [
             'startsAt' => $start->format('Y-m-d\TH:i'),
             'endsAt' => $start->copy()->addHour()->format('Y-m-d\TH:i'),
             'timezone' => 'America/Toronto',
@@ -204,9 +242,32 @@ class OpenHouseTest extends TestCase
         $visit = $this->openHouse($user);
         Http::fake();
 
-        $this->actingAs($user)->getJson('/properties/key-1/open-house/defaults')->assertStatus(403);
-        $this->actingAs($user)->postJson('/properties/key-1/open-houses', [])->assertStatus(403);
-        $this->actingAs($user)->getJson('/open-houses/'.$visit->id.'/registrations')->assertStatus(403);
+        $this->getJson($this->signedUrl('open-houses.defaults', [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ]))->assertStatus(403);
+        $this->postJson($this->signedUrl('open-houses.store', [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ]), [])->assertStatus(403);
+        $this->getJson($this->signedUrl('open-houses.registrations', [
+            'openHouseId' => $visit->id, 'locationId' => $user->id_location,
+        ]))->assertStatus(403);
+        Http::assertNothingSent();
+    }
+
+    public function test_private_endpoints_reject_unsigned_or_tampered_requests()
+    {
+        $user = $this->user();
+        Http::fake();
+
+        $this->getJson('/api/properties/key-1/open-house/defaults?locationId='.$user->id_location)->assertStatus(403);
+        $signed = $this->signedUrl('open-houses.defaults', [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ]);
+        $this->getJson(str_replace('key-1', 'key-2', $signed))->assertStatus(403);
+        $expired = URL::temporarySignedRoute('open-houses.defaults', now()->subMinute(), [
+            'listingKey' => 'key-1', 'locationId' => $user->id_location,
+        ], false);
+        $this->getJson($expired)->assertStatus(403);
         Http::assertNothingSent();
     }
 
