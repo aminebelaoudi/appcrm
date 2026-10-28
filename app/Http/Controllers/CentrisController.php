@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use App\Models\PropertyPerson;
 use App\Models\PropertyOpportunity;
 use App\Models\CentrisSubmission;
+use App\Models\OpenHouse;
 use App\User;
 
 
@@ -494,7 +495,16 @@ class CentrisController extends Controller
         $idLocation = $user ? $user->id_location : null;
         $locationId = request()->query('locationId');
 
-        return view('centris.property-details', compact('property', 'persons', 'opportunities', 'centrisSubmissions', 'idLocation', 'locationId', 'memberName'));
+        $openHouseEnabled = in_array($user->id_location, config('open_houses.allowed_location_ids'), true);
+        $openHouses = $openHouseEnabled
+            ? OpenHouse::where('user_id', $user->id)
+                ->where('listing_key', $listingKey)
+                ->withCount('registrations')
+                ->orderBy('starts_at', 'desc')
+                ->get()
+            : collect();
+
+        return view('centris.property-details', compact('property', 'persons', 'opportunities', 'centrisSubmissions', 'openHouses', 'openHouseEnabled', 'idLocation', 'locationId', 'memberName'));
     }
 
     public function getGHLContacts()

@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\CentrisController;
 use App\Http\Controllers\PropertyRelationController;
+use App\Http\Controllers\OpenHouseController;
 
 use App\Http\Controllers\GhlAuthController;
 use App\Http\Controllers\CentrisSubmissionController;
@@ -35,6 +36,20 @@ Route::get('/properties', [CentrisController::class, 'showProperties'])
 Route::get('/properties/{listingKey}', [CentrisController::class, 'showPropertyDetails'])
     ->name('centris.property.details')
     ->middleware('iframe');
+
+Route::get('/properties/{listingKey}/open-house/defaults', [OpenHouseController::class, 'defaults'])
+    ->name('open-houses.defaults')->middleware('auth');
+Route::post('/properties/{listingKey}/open-houses', [OpenHouseController::class, 'store'])
+    ->name('open-houses.store')->middleware('auth');
+Route::get('/open-houses/{openHouseId}/registrations', [OpenHouseController::class, 'registrations'])
+    ->name('open-houses.registrations')->middleware('auth');
+
+Route::get('/visites-libres/{token}', [OpenHouseController::class, 'show'])
+    ->name('open-houses.public');
+Route::get('/visites-libres/{token}/qr.svg', [OpenHouseController::class, 'qr'])
+    ->name('open-houses.qr');
+Route::post('/visites-libres/{token}/inscriptions', [OpenHouseController::class, 'register'])
+    ->name('open-houses.register')->middleware('throttle:10,1');
 
 // API Routes pour GHL
 Route::get('/api/ghl/contacts', [CentrisController::class, 'getGHLContacts'])

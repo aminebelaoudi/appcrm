@@ -485,6 +485,32 @@
             cursor: not-allowed;
         }
 
+        .open-house-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .open-house-field { min-width: 0; margin-bottom: 15px; }
+        .open-house-field label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 700; color: #374151; }
+        .open-house-field input, .open-house-field textarea { width: 100%; padding: 10px 12px; border: 1px solid #cfd5d9; border-radius: 6px; font: inherit; font-size: 14px; background: #fff; }
+        .open-house-field textarea { min-height: 70px; resize: vertical; }
+        .open-house-field input:focus, .open-house-field textarea:focus { outline: 2px solid rgba(227,28,35,.18); border-color: #e31c23; }
+        .open-house-field.full { grid-column: 1 / -1; }
+        .open-house-table-wrap { width: 100%; overflow-x: auto; }
+        .open-house-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+        .open-house-actions a, .open-house-actions button { border: 1px solid #d4d9dc; color: #374151; background: #fff; border-radius: 5px; padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; text-decoration: none; white-space: nowrap; }
+        .open-house-actions a:hover, .open-house-actions button:hover { color: #e31c23; border-color: #e31c23; }
+        .open-house-result { display: none; border-top: 1px solid #e5e7eb; padding-top: 16px; margin-top: 16px; }
+        .open-house-result.show { display: block; }
+        .open-house-result img { display: block; width: 150px; height: 150px; margin: 12px 0; }
+        .open-house-result a { color: #c71a1f; overflow-wrap: anywhere; }
+        .open-house-visitor-list { max-height: 320px; overflow: auto; }
+        .open-house-visitor { padding: 12px 0; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
+        .open-house-visitor strong { display: block; color: #1f2937; margin-bottom: 4px; }
+        .open-house-visitor span { display: block; color: #6b7280; overflow-wrap: anywhere; }
+        .open-house-visitor a { display: inline-block; margin-top: 5px; color: #c71a1f; font-weight: 700; }
+
+        @media (max-width: 600px) {
+            .open-house-fields { grid-template-columns: 1fr; gap: 0; }
+            .open-house-field.full { grid-column: auto; }
+        }
+
         .status-badge {
             display: inline-block;
             padding: 4px 10px;
@@ -1467,6 +1493,12 @@
                         <span>Planifier un post</span>
                     </button>
                 @endif
+                @if($openHouseEnabled)
+                    <button type="button" class="social-post-button" onclick="openOpenHouseModal()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 21V7l8-4 8 4v14M4 10h16M9 21v-7h6v7M3 21h18"/></svg>
+                        <span>Créer une visite libre</span>
+                    </button>
+                @endif
             </div>
         </div>
 
@@ -1478,6 +1510,7 @@
                 <button class="tab active" onclick="switchTab(event, 'persons')">Personnes impliquées</button>
                 <button class="tab" onclick="switchTab(event, 'opportunities')">Opportunités liées</button>
                 <button class="tab" onclick="switchTab(event, 'centris-submissions')">Soumission centris</button>
+                @if($openHouseEnabled)<button class="tab" onclick="switchTab(event, 'open-houses')">Visites libres</button>@endif
             </div>
         </div>
 
@@ -1698,6 +1731,41 @@
                 </div>
             @endif
         </div>
+        <div id="open-houses-tab" class="tab-content">
+            <div class="section-header">
+                <h2 class="section-title">Visites libres</h2>
+                <button type="button" class="add-button" onclick="openOpenHouseModal()">+ Créer</button>
+            </div>
+            <div class="open-house-table-wrap">
+                <table id="openHousesTable" @if($openHouses->isEmpty()) style="display:none" @endif>
+                    <thead><tr><th>Date et heure</th><th>Visiteurs</th><th>Actions</th></tr></thead>
+                    <tbody id="openHousesBody">
+                        @foreach($openHouses as $visit)
+                            @php
+                                $visitStart = $visit->starts_at->copy()->timezone($visit->timezone);
+                                $visitEnd = $visit->ends_at->copy()->timezone($visit->timezone);
+                                $visitUrl = route('open-houses.public', $visit->public_token);
+                                $qrUrl = route('open-houses.qr', $visit->public_token);
+                            @endphp
+                            <tr>
+                                <td>{{ $visitStart->format('d/m/Y H:i') }} à {{ $visitEnd->format('H:i') }}</td>
+                                <td>{{ $visit->registrations_count }}</td>
+                                <td><div class="open-house-actions">
+                                    <a href="{{ $visitUrl }}" target="_blank" rel="noopener noreferrer">Voir la page</a>
+                                    <button type="button" data-url="{{ $visitUrl }}" onclick="copyOpenHouseUrl(this)">Copier le lien</button>
+                                    <a href="{{ $qrUrl }}" download="visite-libre-{{ $visit->listing_id }}.svg">QR</a>
+                                    <button type="button" data-id="{{ $visit->id }}" onclick="openHouseVisitors(this)">Visiteurs</button>
+                                </div></td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+            <div class="empty-state" id="openHousesEmpty" @if($openHouses->isNotEmpty()) style="display:none" @endif>
+                <h3>Aucune visite libre</h3>
+                <p>Créez une visite libre pour obtenir sa page et son code QR.</p>
+            </div>
+        </div>
         </div>
     </div>
 
@@ -1807,6 +1875,45 @@
         </div>
     </div>
 
+    <div class="social-modal-overlay" id="openHouseModal" role="dialog" aria-modal="true" aria-labelledby="openHouseModalTitle">
+        <div class="social-modal" onclick="event.stopPropagation()">
+            <div class="social-modal-header">
+                <div class="social-modal-title" id="openHouseModalTitle">Créer une visite libre</div>
+                <button type="button" class="social-modal-close" onclick="closeOpenHouseModal()" aria-label="Fermer">×</button>
+            </div>
+            <form id="openHouseForm">
+                <div class="social-modal-body">
+                    <div class="social-modal-alert" id="openHouseAlert"></div>
+                    <div class="open-house-fields">
+                        <div class="open-house-field"><label for="openHouseStarts">Début de la visite</label><input type="datetime-local" id="openHouseStarts" name="startsAt" required></div>
+                        <div class="open-house-field"><label for="openHouseEnds">Fin de la visite</label><input type="datetime-local" id="openHouseEnds" name="endsAt" required></div>
+                        <div class="open-house-field full"><div class="social-modal-note" id="openHouseTimezone">Heure locale de la propriété</div></div>
+                        <div class="open-house-field full"><label for="openHouseBrokerName">Nom du courtier</label><input id="openHouseBrokerName" name="brokerName" required maxlength="255" autocomplete="name"></div>
+                        <div class="open-house-field"><label for="openHouseBrokerEmail">Courriel du courtier</label><input id="openHouseBrokerEmail" name="brokerEmail" type="email" maxlength="255"></div>
+                        <div class="open-house-field"><label for="openHouseBrokerPhone">Téléphone du courtier</label><input id="openHouseBrokerPhone" name="brokerPhone" type="tel" maxlength="255"></div>
+                        <div class="open-house-field full"><label for="openHouseBrokerPhoto">Photo du courtier</label><input id="openHouseBrokerPhoto" name="brokerPhoto" type="file" accept="image/jpeg,image/png,image/webp"></div>
+                        <div class="open-house-field full"><label for="openHouseBrokerPhotoUrl">Ou lien de la photo</label><input id="openHouseBrokerPhotoUrl" name="brokerPhotoUrl" type="url" maxlength="2048"></div>
+                        <div class="open-house-field full"><label for="openHouseNote">Message complémentaire</label><textarea id="openHouseNote" name="note" maxlength="500"></textarea></div>
+                    </div>
+                    <input type="hidden" id="openHouseTimezoneValue" name="timezone" value="America/Toronto">
+                    <div class="social-modal-note" id="openHousePhotosNote"></div>
+                    <div class="open-house-result" id="openHouseResult"></div>
+                </div>
+                <div class="social-modal-footer">
+                    <button type="button" class="social-modal-btn secondary" onclick="closeOpenHouseModal()">Fermer</button>
+                    <button type="submit" class="social-modal-btn primary" id="openHouseSubmit">Créer la visite</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="social-modal-overlay" id="openHouseVisitorsModal" role="dialog" aria-modal="true" aria-labelledby="openHouseVisitorsTitle">
+        <div class="social-modal" onclick="event.stopPropagation()">
+            <div class="social-modal-header"><div class="social-modal-title" id="openHouseVisitorsTitle">Visiteurs inscrits</div><button type="button" class="social-modal-close" onclick="closeOpenHouseVisitors()" aria-label="Fermer">×</button></div>
+            <div class="social-modal-body"><div class="open-house-visitor-list" id="openHouseVisitorList"></div></div>
+        </div>
+    </div>
+
     <script>
         // Variables globales
         const idLocation = '{{ $idLocation }}';
@@ -1846,6 +1953,126 @@
                     "'": '&#039;'
                 }[char];
             });
+        }
+
+        function setOpenHouseAlert(message, type = 'error') {
+            const alert = document.getElementById('openHouseAlert');
+            alert.textContent = message || '';
+            alert.className = `social-modal-alert ${message ? type : ''}`;
+        }
+
+        async function openOpenHouseModal() {
+            const modal = document.getElementById('openHouseModal');
+            const form = document.getElementById('openHouseForm');
+            form.reset();
+            document.getElementById('openHouseResult').classList.remove('show');
+            document.getElementById('openHouseResult').innerHTML = '';
+            document.getElementById('openHouseSubmit').disabled = false;
+            document.getElementById('openHouseSubmit').style.display = '';
+            document.getElementById('openHouseBrokerName').value = @json($memberName ?? '');
+            document.getElementById('openHouseTimezoneValue').value = 'America/Toronto';
+            document.getElementById('openHouseTimezone').textContent = 'Heure locale de la propriété';
+            document.getElementById('openHousePhotosNote').textContent = '';
+            setOpenHouseAlert('');
+            modal.classList.add('open');
+            try {
+                const response = await fetch(`/properties/${encodeURIComponent(propertyListingKey)}/open-house/defaults`, {
+                    headers: { 'Accept': 'application/json' }, credentials: 'same-origin'
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || 'Impossible de charger les informations de la visite.');
+                document.getElementById('openHouseBrokerName').value = data.brokerName || @json($memberName ?? '');
+                document.getElementById('openHouseBrokerEmail').value = data.brokerEmail || '';
+                document.getElementById('openHouseBrokerPhone').value = data.brokerPhone || '';
+                document.getElementById('openHouseBrokerPhotoUrl').value = data.brokerPhotoUrl || '';
+                document.getElementById('openHouseTimezoneValue').value = data.timezone || 'America/Toronto';
+                document.getElementById('openHouseTimezone').textContent = `Heure locale : ${data.timezone || 'America/Toronto'}`;
+                document.getElementById('openHousePhotosNote').textContent = `${data.photoCount || 0} photo(s) Centris seront utilisées.`;
+                if (!data.photoCount) {
+                    setOpenHouseAlert('Aucune photo Centris disponible pour cette propriété.');
+                    document.getElementById('openHouseSubmit').disabled = true;
+                }
+            } catch (error) {
+                setOpenHouseAlert(error.message || 'Impossible de charger les informations.');
+                document.getElementById('openHouseSubmit').disabled = true;
+            }
+        }
+
+        function closeOpenHouseModal() {
+            document.getElementById('openHouseModal').classList.remove('open');
+        }
+
+        async function copyOpenHouseUrl(button) {
+            const url = button.dataset.url;
+            try {
+                await navigator.clipboard.writeText(url);
+            } catch (_) {
+                const input = document.createElement('textarea');
+                input.value = url;
+                document.body.appendChild(input);
+                input.select();
+                document.execCommand('copy');
+                input.remove();
+            }
+            const previous = button.textContent;
+            button.textContent = 'Copié';
+            setTimeout(() => { button.textContent = previous; }, 1800);
+        }
+
+        document.getElementById('openHouseForm').addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const submit = document.getElementById('openHouseSubmit');
+            submit.disabled = true;
+            submit.textContent = 'Création...';
+            setOpenHouseAlert('');
+            try {
+                const response = await fetch(`/properties/${encodeURIComponent(propertyListingKey)}/open-houses`, {
+                    method: 'POST',
+                    headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+                    credentials: 'same-origin',
+                    body: new FormData(event.target)
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    const firstError = data.errors ? Object.values(data.errors)[0][0] : null;
+                    throw new Error(firstError || data.message || 'Impossible de créer la visite.');
+                }
+                const result = document.getElementById('openHouseResult');
+                result.innerHTML = `<strong>La visite libre est prête.</strong><br><a href="${escapeHtml(data.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(data.url)}</a><img src="${escapeHtml(data.qrUrl)}" alt="Code QR de la visite"><div class="open-house-actions"><button type="button" data-url="${escapeHtml(data.url)}" onclick="copyOpenHouseUrl(this)">Copier le lien</button><a href="${escapeHtml(data.qrUrl)}" download="visite-libre.svg">Télécharger le QR</a></div>`;
+                result.classList.add('show');
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${escapeHtml(data.startsAt)} à ${escapeHtml(data.endsAt)}</td><td>0</td><td><div class="open-house-actions"><a href="${escapeHtml(data.url)}" target="_blank" rel="noopener noreferrer">Voir la page</a><button type="button" data-url="${escapeHtml(data.url)}" onclick="copyOpenHouseUrl(this)">Copier le lien</button><a href="${escapeHtml(data.qrUrl)}" download="visite-libre.svg">QR</a><button type="button" data-id="${Number(data.id)}" onclick="openHouseVisitors(this)">Visiteurs</button></div></td>`;
+                document.getElementById('openHousesBody').prepend(row);
+                document.getElementById('openHousesTable').style.display = '';
+                document.getElementById('openHousesEmpty').style.display = 'none';
+                submit.style.display = 'none';
+            } catch (error) {
+                setOpenHouseAlert(error.message || 'Une erreur est survenue.');
+                submit.disabled = false;
+            } finally {
+                submit.textContent = 'Créer la visite';
+            }
+        });
+
+        async function openHouseVisitors(button) {
+            const modal = document.getElementById('openHouseVisitorsModal');
+            const list = document.getElementById('openHouseVisitorList');
+            modal.classList.add('open');
+            list.innerHTML = '<div class="social-modal-note">Chargement...</div>';
+            try {
+                const response = await fetch(`/open-houses/${encodeURIComponent(button.dataset.id)}/registrations`, {
+                    headers: { 'Accept': 'application/json' }, credentials: 'same-origin'
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || 'Impossible de charger les visiteurs.');
+                list.innerHTML = data.visitors.length ? data.visitors.map(visitor => `<div class="open-house-visitor"><strong>${escapeHtml(visitor.name)}</strong><span>${escapeHtml(visitor.email)} · ${escapeHtml(visitor.phone)}</span><span>${escapeHtml(visitor.registeredAt)}</span><a href="${escapeHtml(visitor.contactUrl)}" target="_blank" rel="noopener noreferrer">Voir le contact</a></div>`).join('') : '<div class="social-modal-note">Aucun visiteur inscrit pour cette visite.</div>';
+            } catch (error) {
+                list.innerHTML = `<div class="social-modal-alert error">${escapeHtml(error.message || 'Une erreur est survenue.')}</div>`;
+            }
+        }
+
+        function closeOpenHouseVisitors() {
+            document.getElementById('openHouseVisitorsModal').classList.remove('open');
         }
 
         function setSocialPostAlert(message, type = 'error') {
